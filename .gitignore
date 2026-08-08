@@ -1,0 +1,20 @@
+# Ignore everything by default
+*
+
+# But keep the repository root files and the GARP.lua script
+!/.gitignore
+!/.gitattributes
+!/.gitmodules
+!/.github/
+!README.md
+
+# Keep GARP.lua (case-insensitive depending on OS)
+!GARP.lua
+!GARP.LUA
+!garp.lua
+
+# Unignore reframework folder only if necessary (commented out)
+# !reframework/
+
+# Keep any .txt probe outputs (optional)
+# !reframework/data/Gog Roll Planner/SelectedWeaponProbe.txt
