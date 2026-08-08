@@ -7,14 +7,14 @@
 !/.gitmodules
 !/.github/
 !README.md
+!AGENTS.md
 
-# Keep GARP.lua (case-insensitive depending on OS)
-!GARP.lua
-!GARP.LUA
-!garp.lua
-
-# Unignore reframework folder only if necessary (commented out)
-# !reframework/
+# Keep the active REFramework script and ignore everything else below it.
+!reframework/
+reframework/*
+!reframework/autorun/
+reframework/autorun/*
+!reframework/autorun/GARP.lua
 
 # Keep any .txt probe outputs (optional)
 # !reframework/data/Gog Roll Planner/SelectedWeaponProbe.txt
