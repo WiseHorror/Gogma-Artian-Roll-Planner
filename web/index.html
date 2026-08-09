@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gogma Artian Roll Planner</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1><img class="title-img" src="img/Wilds-Gogmazios-ICON-Flat-Orange.png" alt=""> Gog Roll Planner</h1>
+      <p>Artian and Gogma route calculator for Monster Hunter Wilds.</p>
+    </header>
+
+    <section class="panel import-panel">
+      <div class="panel-head">
+        <div>
+          <h2><span class="section-icon" aria-hidden="true">IN</span> Import</h2>
+          <p>Paste, drop, or choose values exported by the REFramework mod.</p>
+        </div>
+        <div class="actions">
+          <button id="chooseFileButton" type="button" class="secondary">Choose JSON</button>
+          <button id="importButton">Import Values</button>
+          <button id="sampleButton" type="button" class="secondary">Load Sample</button>
+        </div>
+      </div>
+      <input id="fileInput" class="file-input" type="file" accept="application/json,.json">
+      <div id="dropZone" class="drop-zone">
+        <textarea id="importText" spellcheck="false" placeholder="Paste JSON text here, paste a JSON file, or drop GogmaWebCalculatorValues.json onto this box."></textarea>
+        <div id="importStatus" class="import-status">Waiting for exported values.</div>
+      </div>
+    </section>
+
+    <section class="panel calculator-panel">
+      <div class="panel-head">
+        <div>
+          <h2><span class="section-icon" aria-hidden="true">RN</span> Inputs</h2>
+          <p>Seed, counters, final recipe, and target rolls.</p>
+        </div>
+        <button id="calculateButton">Calculate</button>
+      </div>
+
+      <div class="subpanel">
+        <h3><span class="mini-icon" aria-hidden="true">#</span> RNG State</h3>
+        <div class="grid compact">
+          <label>Base seed <input id="baseSeed" type="number" min="0"></label>
+          <label>Skill counter <input id="skillCounter" type="number" min="0"></label>
+          <label>Gogma counter <input id="gogmaCounter" type="number" min="0"></label>
+          <label>Counter gate <input id="counterGate" type="number" min="0"></label>
+          <label>Forge counter <input id="createCount" type="number" min="0"></label>
+          <label>Weapon type <span class="weapon-select"><img id="weaponIcon" class="weapon-icon" alt=""><select id="weaponType"></select></span></label>
+        </div>
+      </div>
+
+      <div class="subpanel">
+        <h3><span class="mini-icon" aria-hidden="true">MT</span> Final Materials</h3>
+        <div id="materials" class="materials"></div>
+        <p id="recipeSummary" class="summary"></p>
+      </div>
+
+      <div class="subpanel">
+        <h3><span class="mini-icon" aria-hidden="true">TG</span> Targets</h3>
+        <div class="grid two">
+          <label>Set skill <select id="desiredSetSkill"></select></label>
+          <label>Group skill <select id="desiredGroupSkill"></select></label>
+        </div>
+        <div id="reinforcements" class="reinforcement-grid"></div>
+        <div class="checks">
+          <label><input id="includeSkills" type="checkbox" checked> Include set/group skills</label>
+          <label><input id="includeReinforcements" type="checkbox" checked> Include reinforcements</label>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel result-panel">
+      <div class="panel-head">
+        <div>
+          <h2><span class="section-icon" aria-hidden="true">OK</span> Result</h2>
+          <p>Route summary and required actions.</p>
+        </div>
+        <button id="exportCsvButton" type="button" class="secondary">Export CSV</button>
+      </div>
+      <div id="result" class="result">Enter values and calculate.</div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

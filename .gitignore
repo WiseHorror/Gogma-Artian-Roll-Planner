@@ -1,20 +1,27 @@
-# Ignore everything by default
-*
+# REFramework/runtime output
+reframework/data/
+reframework/log.txt
 
-# But keep the repository root files and the GARP.lua script
-!/.gitignore
-!/.gitattributes
-!/.gitmodules
-!/.github/
-!README.md
-!AGENTS.md
+# Local reverse-engineering dumps and game packaging files
+*.disasm.txt
+modinfo.ini
+save/
 
-# Keep the active REFramework script and ignore everything else below it.
-!reframework/
-reframework/*
-!reframework/autorun/
-reframework/autorun/*
-!reframework/autorun/GARP.lua
+# Local agent/tool state
+.agent/
+.agents/
+.codex/
+.external/
 
-# Keep any .txt probe outputs (optional)
-# !reframework/data/Gog Roll Planner/SelectedWeaponProbe.txt
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak

@@ -17,28 +17,37 @@ Here is the whole process in plain terms:
    already stored on the new weapon even though the weapon starts at level 0/5.
    Reinforcing it reveals and applies those five stored bonuses; it does not
    make a fresh random roll at every level.
-3. **The part recipe controls what base bonuses are possible.** A recipe can
-   allow Element, Attack, Sharpness, or Affinity in different amounts, and can
-   exclude a family completely. For example, a target containing Attack is
-   impossible for a detected recipe whose pool does not include Attack.
+3. **The part recipe controls what base bonuses are possible.** Each part has
+   an element/status and either Attack or Affinity Infusion. Two matching
+   attributes determine the forged weapon's attribute; three matching
+   attributes also grant Element Infusion. The planner derives the base bonus
+   pool from these choices and rejects an impossible target.
 4. **Forging advances a predetermined stream.** The stream is based on the save
    state, weapon type, and rarity. Forging another weapon of that type and
    rarity advances to the next result. Reloading an earlier save restores the
    earlier stream position.
 5. **Upgrade the completed base weapon into a Gogma Artian weapon.** Base
-   Attack, Affinity, and Element bonuses become their Gogma level-I versions.
-   Sharpness remains Sharpness Boost.
+   Attack Boost I, Affinity Boost I, and Element Boost I become their
+   corresponding Gogma level-I bonuses. Sharpness Boost keeps the same name.
 6. **Gogma set/group skills use their own stream.** The sequence depends on the
    weapon type and elemental attribute. **Reset Skills** advances this stream.
+   Upgrading another completed weapon to Gogma also advances it once; merely
+   forging a base Artian weapon does not.
 7. **Gogma reinforcement amendments use another independent stream.**
    **Reset Bonuses** replaces all five bonuses from the full eligible pool.
    **Keep Bonuses** preserves each slot's bonus family and rerolls its permitted
    tier. The planner can combine both modes to find the shortest route.
 
 The skill and Gogma reinforcement counters are independent. Spending actions
-on one does not advance the other. Hovering over a weapon in the smithy's
-upgrade list lets the mod read its current stored values and counters without
-spending materials.
+on one does not advance the other. The full weapon plan reads the saved counters
+directly and calculates the route from the selected final recipe.
+
+Forging any weapon of the same weapon type and rarity advances the shared base
+forge stream. The disposable weapons do not need the same element or infusion
+parts. Only the final weapon must use the intended recipe. For example, an Ice
+Insect Glaive made from three Attack Infusion parts can be reached by forging
+cheaper rarity-8 Insect Glaives first, then using the Ice/Attack parts only for
+the target forge.
 
 ## What Works
 
@@ -47,33 +56,45 @@ spending materials.
 - Showing the exact number of **Reset Skills** actions needed.
 - Predicting the five base Artian reinforcement bonuses assigned when a weapon
   is forged.
-- Selecting an exact five-bonus base Artian target.
+- Selecting one exact five-bonus reinforcement target. Base-tier targets may
+  finish as base Artian weapons; advanced targets continue through Gogma.
 - Showing how many weapons of the same weapon type and rarity must be forged to
-  reach that target.
+  reach a base-tier target or the best starting point for a Gogma target.
 - Searching mixed **Amend (Reset Bonuses)** and **Amend (Keep Bonuses)** paths
   for an exact five-bonus Gogma reinforcement target.
 - Exporting the current predictions as a CSV table for Google Sheets.
 - Including or excluding each prediction stage from the combined plan and CSV.
 - Treating base Artian Attack, Affinity, and Element bonuses as level I when the
   weapon is upgraded to a Gogma Artian weapon.
+- Taking a fixed from-scratch planning snapshot that compares disposable
+  advance-forges with the final target forge, skill resets, and Gogma
+  amendments.
+- Reading the saved base-forge counter directly from the save manager.
+  Calculating a plan does not consume parts or require a test forge.
+- Estimating Artian parts, reinforcement points, Gogma material points, Tarred
+  Devices, and zenny for the calculated route.
 
 ## Still In Development
 
-- Calculating one optimal route from forging a base Artian weapon through its
-  final Gogma set skill, group skill, and reinforcement bonuses.
-- Comparing material and forging costs when several valid routes exist.
+- Verifying the recipe-derived base pools for every raw, element, and status
+  combination. The elemental Insect Glaive path is implemented; other recipes
+  remain experimental until checked against in-game results.
 
-The Debug panel contains temporary Gogma reinforcement research and RNG
-validation information. It is not required for the working skill or base
-reinforcement predictions.
+The full-route search added in v0.3.0 is experimental until its upgrade-time
+skill and Gogma results have been validated against a complete in-game route.
 
-## Predict Gogma Reinforcements
+## Choose Targets
 
-1. Select the five desired values under **Gogma reinforcements**. Their order
-   does not matter; the planner compares the complete set of five bonuses.
-2. Hover over the Gogma Artian weapon in the smithy's upgrade list. The mod
-   reads its current reinforcement stream automatically.
-3. Press **Recalculate** after changing the target.
+Use the **Full weapon plan** section to choose the final recipe, desired
+reinforcements, and desired Gogma set/group skills. Press **Calculate full
+plan** after changing any target.
+
+Targets made only from **Attack Boost I**, **Affinity Boost I**, **Element
+Boost I**, and **Sharpness Boost** may finish as base Artian weapons. Selecting
+any II, III, EX, or **Sharpness/Ammo Boost EX** bonus makes it a Gogma target;
+the planner then chooses the best base result as a starting point. Base I
+bonuses cannot be mixed with Gogma II/III/EX bonuses in one target. Sharpness
+Boost is shared by both stages.
 
 The planner searches both amendment modes together and displays the shortest
 reachable route. A mixed result is shown as a number of **Reset Bonuses**
@@ -99,53 +120,105 @@ If the game and REFramework are already running, open the REFramework menu with
 
 The mod appears under **Script Generated UI > Gog Roll Planner**.
 
-## Predict Set And Group Skills
+## Web Calculator
 
-1. Open **Gog Roll Planner** in the REFramework menu.
-2. Enable the mod.
-3. Select the desired **Set skill** and **Group skill**.
-4. Hover over the Gogma Artian weapon in the smithy's upgrade list.
-
-The mod displays its current skills and a route such as:
+The `web/` folder contains a standalone calculator that can be opened directly
+in a browser:
 
 ```text
-Route: reset skills 12 time(s)
+web/index.html
 ```
 
-The count is the number of resets required from the current result. If you
-change either target, press **Recalculate**.
+In the mod, enable **Show web calculator values**, press **Calculate full
+plan**, then press **Export web calculator values**. The mod writes:
 
-## Predict Base Artian Reinforcements
+```text
+<Monster Hunter Wilds>/reframework/data/Gogma Artian Roll Planner/GogmaWebCalculatorValues.json
+```
+
+Paste that file's contents into the web page's import box to reuse the same
+seed, counters, recipe, and targets outside the game.
+
+## Base Artian Results
 
 Base Artian weapons receive their complete five-bonus sequence when they are
 forged. Reinforcing the weapon reveals and applies that existing sequence; it
 does not generate one new random bonus at each level.
 
-1. Select the desired values for **Bonus 1** through **Bonus 5**.
-2. Forge one weapon of the weapon type and rarity you want to search.
-3. Return to the mod panel.
+1. Under **Full weapon plan**, select the weapon type and the element/status and
+   infusion on each of its three final materials. The selectors use that
+   weapon's required Blade, Tube, Disc, and Device combination.
+2. Under **Desired reinforcements**, select only base-tier values for **Bonus
+   1** through **Bonus 5**, then press **Calculate full plan**.
 
-That forge identifies the stream and the recipe's possible bonus pool. The mod
-shows each available family and its maximum, then reports how many additional
-weapons of the same type, rarity, and recipe must be forged. For example:
+The mod reads the current stream position directly and reports how many weapons
+of that type and rarity must be forged. For example:
 
 ```text
 Route: forge 3 more weapon(s), then keep the last one
 ```
 
-Press **Recalculate** after changing any reinforcement target.
+Press **Calculate full plan** after changing any reinforcement target.
 
 Element does not select a separate base reinforcement counter. The counter is
 keyed by weapon type and rarity, so forging another element of the same weapon
 type advances the same sequence. The predictor uses the game's base bonus pool
 and removes Sharpness after it has been selected twice while generating the
-five bonuses for the standard recipe. Some material combinations use different
-limits and may exclude a bonus family; the mod identifies that recipe pool
-from the completed forge before calculating the next route.
+five bonuses. Material combinations can change the available bonus families;
+the planner derives that pool without consuming a weapon.
 
 If the selected target asks for an excluded family or more copies than the
 recipe permits, the UI reports **Impossible for this recipe** instead of
 searching thousands of unreachable forge results.
+
+## Plan A Complete Weapon
+
+1. Under **Full weapon plan**, choose the final weapon type and all three final
+   materials. The planner derives the forged attribute and bonus availability.
+2. Select which stages to include and choose the desired reinforcements and
+   Gogma set/group skills. The reinforcement target itself determines whether
+   the weapon may stop at base Artian or must continue to Gogma.
+3. Press **Calculate full plan**. No weapon needs to be forged first.
+
+If the game exposes several character saves with different Artian forge
+counters, choose the currently loaded character from **Saved character**. The
+planner will not guess between different counters.
+
+The calculation takes a fixed snapshot of the saved counters. It may tell you
+to forge disposable weapons first. Those advance-forges only need to match the
+target's weapon type and rarity; they may use any valid parts. The last forge
+uses the selected final materials. The plan then lists reinforcement, the Gogma
+upgrade, paid skill resets, and Reset/Keep amendment steps. The listed
+**Reset Skills** count starts after the free skill assignment performed by the
+Gogma upgrade itself.
+
+Disposable base weapons advance the base reinforcement stream as soon as they
+are forged. The full plan uses them when they reduce the combined base/Gogma
+reinforcement route. For skills, the planner only shows **Reset Skills** because
+upgrading disposable weapons advances the same stream by the same amount while
+costing substantially more materials.
+
+If the plan starts directly with the target forge, that means the current base
+stream already gives the best combined route. It does not mean disposable
+forges were omitted from the search.
+
+When the selected target contains a Gogma-tier bonus, the selected base Artian
+bonuses are not a separate requirement. The planner considers every base result
+allowed by the final recipe and chooses the one that reaches the requested
+Gogma bonuses with the fewest total forges and amendments. A target containing
+only base-tier bonuses instead ends after the base weapon is reinforced to 5/5,
+unless the Gogma skill stage is also included.
+
+The forge and reinforcement snapshot stays unchanged while browsing the smithy
+list. Press **Calculate full plan** again only when you intentionally want to
+start from the current save counters or after changing the targets. Runtime
+validation after the upgrade does not rewrite that snapshot.
+
+The saved creation counter is the index consumed by the next weapon. The
+planner reacquires the active save object whenever a plan is calculated, then
+advances the base reinforcement RNG by `creation index * 10` before drawing the
+weapon's five bonuses. This matters after reloading a save because the game
+replaces its live save-data objects.
 
 ## Saving Settings
 
@@ -157,6 +230,28 @@ The mod stores its enabled state and selected targets in:
 
 This file is managed automatically. It is not necessary to edit it manually.
 Removing it resets the mod's selections to their defaults.
+
+## Material Costs
+
+The full weapon plan includes a cost estimate based on the actions in its saved
+route:
+
+- Each rarity-8 forge uses 3 Artian parts and 10,000z.
+- Reinforcing the kept base weapon through all five levels uses 15,000 base
+  reinforcement points and 10,000z in total.
+- Upgrading the completed weapon to Gogma uses 3 Tarred Devices and 30,000z.
+- Each **Reset Skills** action uses 1,500 Gogma material points and 9,000z.
+- Each **Amend** action uses 6,000 Gogma material points and 5,000z.
+
+Base reinforcement ores are worth 20 points for Drearisite, 100 for Specklite,
+200 for Argecite, and 300 for Oricalcite. The overlay shows how many of each ore
+would be needed if only that ore were used. You can mix ores freely.
+
+Gogma materials with a focus matching the weapon contribute twice their listed
+points. Because the best mixture depends on the materials in the player's box,
+the planner reports the required point total instead of pretending there is one
+exact item count. If the upgraded weapon's skill stream has not been identified,
+the estimate is marked partial and does not yet include skill-reset costs.
 
 ## Export To Google Sheets
 
@@ -174,43 +269,15 @@ streams you want to include. The mod writes:
 
 In Google Sheets, use **File > Import > Upload** and select that CSV file. The
 table contains one row for every predicted forge, skill reset, and Gogma
-amendment. Each row shows its step within that stage, the action to perform,
-that individual action's predicted result, and the selected target. The three
-stages describe their currently identified streams independently; the row
-number is not yet a combined from-scratch execution order. Exporting happens
-only when the button is pressed; the mod does not write this file while
-navigating game menus.
-
-When Base Artian and Gogma stages are selected together, the displayed Gogma
-steps still belong to the currently identified Gogma weapon. Forge the chosen
-base weapon and identify its Gogma streams before treating all three sections
-as one end-to-end route.
-
-## Debug Mode
-
-Enable **Debug** only when collecting information for development. It shows the
-captured native values and Gogma reinforcement candidate pools. Selecting a
-weapon writes the complete selection probe to:
-
-```text
-<Monster Hunter Wilds>/reframework/data/Gog Roll Planner/SelectedWeaponProbe.txt
-```
-
-The file is replaced once per weapon selection so the long object details do
-not need to fit in the REFramework overlay.
-
-Selecting an Artian weapon also reads its current save-box work record and
-identifies its set/group skill and Gogma reinforcement streams without spending
-materials on an initial reset or amendment. This identification works with
-Debug disabled; only the text probe export requires Debug.
+amendment, plus a full-plan totals row. Each row shows its step within that
+stage, the action to perform, its predicted result, the selected target, and
+the points, zenny, parts, or Tarred Devices consumed. Exporting happens only
+when the button is pressed; the mod does not write this file while navigating
+game menus.
 
 Set/group skill streams depend on weapon type and elemental attribute. Weapons
 of the same type but different elements can therefore have different skill
 sequences.
-
-Debug mode does not continuously write capture files. Earlier development
-versions produced several text dumps under `reframework/data`; the current mod
-does not use them and they may be removed.
 
 ## Important Notes
 
