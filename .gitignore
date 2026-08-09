@@ -1,6 +1,7 @@
 # REFramework/runtime output
 reframework/data/
 reframework/log.txt
+/Gogma Artian Roll Planner/
 
 # Local reverse-engineering dumps and game packaging files
 *.disasm.txt
