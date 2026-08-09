@@ -122,11 +122,11 @@ The mod appears under **Script Generated UI > Gog Roll Planner**.
 
 ## Web Calculator
 
-The `web/` folder contains a standalone calculator that can be opened directly
-in a browser:
+The repository root contains a standalone calculator that can be opened directly
+in a browser or hosted with GitHub Pages:
 
 ```text
-web/index.html
+index.html
 ```
 
 In the mod, enable **Show web calculator values**, press **Calculate full
