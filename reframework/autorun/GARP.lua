@@ -2,7 +2,7 @@
 -- Artian/Gogma skill and reinforcement route planner for Monster Hunter Wilds.
 
 local MOD_NAME = "Gogma Artian Roll Planner"
-local VERSION = "0.8.14"
+local VERSION = "0.8.15"
 local CONFIG_PATH = "GogmaArtianRollPlanner.json"
 local EXPORT_DIRECTORY = "Gogma Artian Roll Planner"
 local EXPORT_PATH = EXPORT_DIRECTORY .. "/GogmaArtianRollPlannerPredictions.csv"
@@ -1550,7 +1550,8 @@ local function calculate_from_scratch_plan()
             local amendments = 0
             if state.include_gogma_predictions
                 and not same_multiset(unpack_gogma_bonus_ids(packed), gogma_target) then
-                local cached = route_cache[packed]
+                local route_key = gogma_family_layout(packed)
+                local cached = route_cache[route_key]
                 if cached == nil then
                     local remaining = best ~= nil
                         and math.max(0, best.total - forge_count - skill_resets - 1)
@@ -1558,16 +1559,20 @@ local function calculate_from_scratch_plan()
                     local distance, value, last_reset = find_mixed_gogma_route_from(
                         gogma_capture, packed, gogma_target, remaining
                     )
-                    cached = {
-                        distance = distance,
-                        value = value,
-                        resets = last_reset or 0,
-                        keeps = distance ~= nil and (last_reset ~= nil
-                            and distance - last_reset or distance) or nil,
-                    }
-                    route_cache[packed] = cached
+                    if distance == nil then
+                        cached = false
+                    else
+                        cached = {
+                            distance = distance,
+                            value = value,
+                            resets = last_reset or 0,
+                            keeps = last_reset ~= nil
+                                and distance - last_reset or distance,
+                        }
+                    end
+                    route_cache[route_key] = cached
                 end
-                if cached.distance == nil then
+                if cached == false then
                     eligible = false
                 else
                     amendments = cached.distance

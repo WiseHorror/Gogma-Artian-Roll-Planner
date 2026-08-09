@@ -338,11 +338,12 @@ function calculate(values) {
     let eligible = !includeBase || sameMultiset(drawn.bonuses, baseTarget);
     let amendments = 0, resets = 0, keeps = 0, result = drawn.packed;
     if (eligible && includeGogma && !sameMultiset(unpackGogma(drawn.packed), gogmaTarget)) {
-      if (!cache.has(drawn.packed)) {
+      const routeKey = familyLayout(drawn.packed);
+      if (!cache.has(routeKey)) {
         const remaining = best ? Math.max(0, best.total - forgeCount - skillResets - 1) : 5000;
-        cache.set(drawn.packed, findGogmaRoute({...values, attribute: skillAttributeForce(recipe.finalAttribute)}, drawn.packed, gogmaTarget, remaining));
+        cache.set(routeKey, findGogmaRoute({...values, attribute: skillAttributeForce(recipe.finalAttribute)}, drawn.packed, gogmaTarget, remaining));
       }
-      const route = cache.get(drawn.packed);
+      const route = cache.get(routeKey);
       if (!route) eligible = false;
       else {
         amendments = route.distance; resets = route.resets; keeps = route.keeps; result = route.value;
