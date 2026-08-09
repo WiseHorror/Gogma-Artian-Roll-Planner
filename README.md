@@ -99,8 +99,10 @@ selecting it, dragging it onto the import box, pasting the file, or pasting
 its JSON text.
 
 An Existing weapon export includes the selected Gogma Artian weapon's current
-attribute, set/group skills, reinforcements, and the live RNG counters. The
-web page cannot read a local game save or equipment box by itself.
+attribute, set/group skills, reinforcements, and the live RNG counters. It also
+includes the detected equipment-box weapons, which appear in the web page's
+**Existing weapon** dropdown after import. The web page cannot read a local
+game save or equipment box by itself.
 
 The mod writes:
 

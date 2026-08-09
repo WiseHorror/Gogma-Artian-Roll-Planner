@@ -2,7 +2,7 @@
 -- Artian/Gogma skill and reinforcement route planner for Monster Hunter Wilds.
 
 local MOD_NAME = "Gogma Artian Roll Planner"
-local VERSION = "0.9.1"
+local VERSION = "0.9.0"
 local CONFIG_PATH = "GogmaArtianRollPlanner.json"
 local EXPORT_DIRECTORY = "Gogma Artian Roll Planner"
 local EXPORT_PATH = EXPORT_DIRECTORY .. "/GogmaArtianRollPlannerPredictions.csv"
@@ -2676,32 +2676,6 @@ local function attribute_index_for_force(attribute_force)
     return 1
 end
 
-local function existing_weapon_web_json(weapon)
-    local set_name, group_name = names_for_artian_skill_type(weapon.skill_type)
-    local set_index = index_of(set_skill_names, set_name)
-    local group_index = index_of(group_skill_names, group_name)
-    if set_index == nil or group_index == nil then
-        return nil
-    end
-    local tier = packed_reinforcement_tier(weapon.gogma_value)
-    local reinforcements = {}
-    local packed = tonumber(weapon.gogma_value) or 0
-    for _ = 1, 5 do
-        local value = packed % 1000
-        table.insert(reinforcements, tostring(tier == "gogma" and value - 1 or value))
-        packed = math.floor(packed / 1000)
-    end
-    return "{"
-        .. '"weaponType":' .. tostring(weapon.weapon_type) .. ","
-        .. '"existingAttribute":' .. tostring(attribute_index_for_force(weapon.attribute_force)) .. ","
-        .. '"attributeForce":' .. tostring(weapon.attribute_force) .. ","
-        .. '"currentSetSkill":' .. tostring(set_index) .. ","
-        .. '"currentGroupSkill":' .. tostring(group_index) .. ","
-        .. '"currentReinforcementTier":"' .. tier .. '",'
-        .. '"currentReinforcements":[' .. table.concat(reinforcements, ",") .. "]"
-        .. "}"
-end
-
 local function new_weapon_web_calculator_values_text()
     local final_attribute = derive_material_recipe()
     local skill_capture = state.full_plan_skill_capture or {}
@@ -2748,27 +2722,17 @@ local function existing_weapon_web_calculator_values_text(selected_weapon)
     if packed_reinforcement_tier(selected_weapon.gogma_value) ~= "gogma" then
         return nil, "Export failed: the selected weapon must be Gogma Artian."
     end
-    local selected_json = existing_weapon_web_json(selected_weapon)
-    if selected_json == nil then
+    local set_name, group_name = names_for_artian_skill_type(selected_weapon.skill_type)
+    local set_index = index_of(set_skill_names, set_name)
+    local group_index = index_of(group_skill_names, group_name)
+    if set_index == nil or group_index == nil then
         return nil, "Export failed: the selected weapon's skills could not be mapped."
     end
-    local selected_set, selected_group = names_for_artian_skill_type(selected_weapon.skill_type)
-    local selected_set_index = index_of(set_skill_names, selected_set)
-    local selected_group_index = index_of(group_skill_names, selected_group)
-    local weapon_json = {}
-    local selected_export_index = nil
-    for _, weapon in ipairs(state.existing_weapons or {}) do
-        local encoded = existing_weapon_web_json(weapon)
-        if encoded ~= nil then
-            table.insert(weapon_json, encoded)
-            if weapon.index == selected_weapon.index then
-                selected_export_index = #weapon_json - 1
-            end
-        end
+    local current_reinforcements = {}
+    for _, id in ipairs(unpack_gogma_bonus_ids(selected_weapon.gogma_value)) do
+        table.insert(current_reinforcements, tostring(id))
     end
-    if selected_export_index == nil then
-        return nil, "Export failed: the selected weapon is not in the detected weapon list."
-    end
+    local attribute_index = attribute_index_for_force(selected_weapon.attribute_force)
     local lines = {
         "{",
         '  "planMode": "existing",',
@@ -2776,15 +2740,12 @@ local function existing_weapon_web_calculator_values_text(selected_weapon)
         '  "skillCounter": ' .. tostring(rng_state.counter or 0) .. ",",
         '  "gogmaCounter": ' .. tostring(rng_state.gogma_counter or 0) .. ",",
         '  "counterGate": ' .. tostring(rng_state.counter_gate or 0) .. ",",
-        '  "selectedExistingWeapon": ' .. tostring(selected_export_index) .. ",",
-        '  "existingWeapons": [' .. table.concat(weapon_json, ",") .. "],",
         '  "weaponType": ' .. tostring(selected_weapon.weapon_type) .. ",",
-        '  "existingAttribute": ' .. tostring(attribute_index_for_force(selected_weapon.attribute_force)) .. ",",
+        '  "existingAttribute": ' .. tostring(attribute_index) .. ",",
         '  "attributeForce": ' .. tostring(selected_weapon.attribute_force) .. ",",
-        '  "currentSetSkill": ' .. tostring(selected_set_index) .. ",",
-        '  "currentGroupSkill": ' .. tostring(selected_group_index) .. ",",
-        '  "currentReinforcementTier": "gogma",',
-        '  "currentReinforcements": [' .. table.concat(unpack_gogma_bonus_ids(selected_weapon.gogma_value), ", ") .. "],",
+        '  "currentSetSkill": ' .. tostring(set_index) .. ",",
+        '  "currentGroupSkill": ' .. tostring(group_index) .. ",",
+        '  "currentReinforcements": [' .. table.concat(current_reinforcements, ", ") .. "],",
         '  "desiredReinforcements": [' .. reinforcement_target_json() .. "],",
         '  "desiredSetSkill": ' .. tostring(state.desired_set_skill) .. ",",
         '  "desiredGroupSkill": ' .. tostring(state.desired_group_skill) .. ",",

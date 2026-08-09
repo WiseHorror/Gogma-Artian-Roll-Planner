@@ -14,6 +14,8 @@ const COSTS = {
   gogmaAmendZenny: 5000,
 };
 let lastCalculation = null;
+let importedExistingWeapons = [];
+let currentExistingReinforcementTier = "gogma";
 
 const setSkillNames = [
   "Arkveld's Hunger", "Blangonga's Spirit", "Doshaguma's Might",
@@ -292,6 +294,12 @@ function namesForPackedGogma(packed) {
 function packGogmaIds(ids) {
   return ids.reduce((packed, id, index) => packed + (id + 1) * (1000 ** index), 0);
 }
+function namesForCurrentReinforcements(values) {
+  const packed = values.currentReinforcementTier === "gogma"
+    ? packGogmaIds(values.currentReinforcements)
+    : values.currentReinforcements.reduce((total, id, index) => total + id * (1000 ** index), 0);
+  return values.currentReinforcementTier === "gogma" ? namesForPackedGogma(packed) : namesForPackedBase(packed);
+}
 function nameForSkillIndex(index) {
   const skill = skillFromIndex(index);
   return `${skill.setName} / ${skill.groupName}`;
@@ -381,6 +389,9 @@ function calculateExisting(values) {
   if (values.includeReinforcements) {
     if (targetMode !== "gogma") {
       throw new Error("Existing weapon amendments require a Gogma-tier reinforcement target.");
+    }
+    if (values.currentReinforcementTier !== "gogma") {
+      throw new Error("The selected weapon is still base Artian; upgrade it to Gogma before amendment planning.");
     }
     const currentValue = packGogmaIds(values.currentReinforcements);
     const target = selectedGogmaTarget(values.desiredReinforcements);
@@ -553,7 +564,7 @@ function exportCsv() {
   if (mode === "existing") {
     rows.push([
       ++overallStep, "", "Existing weapon", "Current state",
-      `${setSkillNames[values.currentSetSkill - 1]} / ${groupSkillNames[values.currentGroupSkill - 1]} | ${namesForPackedGogma(packGogmaIds(values.currentReinforcements))}`,
+      `${setSkillNames[values.currentSetSkill - 1]} / ${groupSkillNames[values.currentGroupSkill - 1]} | ${namesForCurrentReinforcements(values)}`,
       "", 0, 0, 0, 0, 0,
     ]);
     overallStep = appendExistingSkillPredictionRows(rows, overallStep, values, result);
@@ -631,19 +642,47 @@ function buildReinforcements() {
     wrap.append(label);
   }
 }
-function buildCurrentReinforcements() {
+function buildCurrentReinforcements(tier = "gogma", values = []) {
   const wrap = document.getElementById("currentReinforcements");
-  const currentIds = [6, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+  const currentIds = tier === "gogma" ? [6, 8, 9, 10, 11, 12, 13, 14, 15, 16] : [4, 6, 7, 8];
+  const names = tier === "gogma" ? gogmaNames : baseNames;
+  currentExistingReinforcementTier = tier;
+  wrap.innerHTML = "";
   for (let i = 0; i < 5; i++) {
     const label = document.createElement("label");
     label.className = "reinforcement";
     label.innerHTML = `<span class="field-label"><span class="mini-icon" aria-hidden="true">B${i + 1}</span>Current bonus ${i + 1}</span>`;
     const select = document.createElement("select");
     select.id = `currentReinforcement${i}`;
-    currentIds.forEach((id) => option(select, gogmaNames[id], id));
+    currentIds.forEach((id) => option(select, names[id], id));
+    if (values[i] != null) select.value = values[i];
     label.append(select);
     wrap.append(label);
   }
+}
+function existingWeaponLabel(weapon, index) {
+  const values = {...weapon, currentReinforcementTier: weapon.currentReinforcementTier || "gogma"};
+  return `#${index + 1} ${weaponTypeNames[weapon.weaponType] || "Weapon"} / ${attributeNames[weapon.existingAttribute - 1] || "Attribute"} / ${setSkillNames[weapon.currentSetSkill - 1]} / ${groupSkillNames[weapon.currentGroupSkill - 1]} / ${namesForCurrentReinforcements(values)}`;
+}
+function setExistingWeaponCatalog(weapons, selectedIndex) {
+  importedExistingWeapons = Array.isArray(weapons) ? weapons : [];
+  const field = document.getElementById("existingWeaponCatalogField");
+  const select = document.getElementById("existingWeaponCatalog");
+  select.innerHTML = "";
+  importedExistingWeapons.forEach((weapon, index) => option(select, existingWeaponLabel(weapon, index), index));
+  field.hidden = importedExistingWeapons.length === 0;
+  if (importedExistingWeapons.length > 0) {
+    select.value = Math.min(Math.max(Number(selectedIndex) || 0, 0), importedExistingWeapons.length - 1);
+  }
+}
+function applyExistingWeapon(weapon) {
+  if (!weapon) return;
+  document.getElementById("weaponType").value = weapon.weaponType;
+  updateWeaponIcon();
+  document.getElementById("existingAttribute").value = weapon.existingAttribute;
+  document.getElementById("currentSetSkill").value = weapon.currentSetSkill;
+  document.getElementById("currentGroupSkill").value = weapon.currentGroupSkill;
+  buildCurrentReinforcements(weapon.currentReinforcementTier || "gogma", weapon.currentReinforcements || []);
 }
 function getValues() {
   return {
@@ -666,6 +705,7 @@ function getValues() {
     currentSetSkill: Number(document.getElementById("currentSetSkill").value),
     currentGroupSkill: Number(document.getElementById("currentGroupSkill").value),
     currentReinforcements: [0, 1, 2, 3, 4].map((i) => Number(document.getElementById(`currentReinforcement${i}`).value)),
+    currentReinforcementTier: currentExistingReinforcementTier,
   };
 }
 function setValues(v) {
@@ -686,12 +726,20 @@ function setValues(v) {
   if (v.existingAttribute != null) document.getElementById("existingAttribute").value = v.existingAttribute;
   if (v.currentSetSkill != null) document.getElementById("currentSetSkill").value = v.currentSetSkill;
   if (v.currentGroupSkill != null) document.getElementById("currentGroupSkill").value = v.currentGroupSkill;
-  (v.currentReinforcements || [15, 15, 12, 16, 10]).forEach((x, i) => document.getElementById(`currentReinforcement${i}`).value = x);
+  buildCurrentReinforcements(v.currentReinforcementTier || "gogma", v.currentReinforcements || [15, 15, 12, 16, 10]);
+  if (Array.isArray(v.existingWeapons)) {
+    setExistingWeaponCatalog(v.existingWeapons, v.selectedExistingWeapon);
+  } else if (v.planMode === "new") {
+    setExistingWeaponCatalog([], 0);
+  }
   if (v.planMode) {
     const radio = document.querySelector(`input[name="planMode"][value="${v.planMode}"]`);
     if (radio) radio.checked = true;
   }
   updatePlanMode();
+  if (Array.isArray(v.existingWeapons) && importedExistingWeapons.length > 0) {
+    applyExistingWeapon(importedExistingWeapons[Number(document.getElementById("existingWeaponCatalog").value)]);
+  }
 }
 function setImportStatus(message, tone = "") {
   const status = document.getElementById("importStatus");
@@ -732,7 +780,7 @@ function renderResult() {
     if (values.planMode === "existing") {
       lines.push(`Current weapon: ${attributeNames[values.existingAttribute - 1]} ${weaponTypeNames[values.weaponType]}`);
       lines.push(`Current skills: ${setSkillNames[values.currentSetSkill - 1]} / ${groupSkillNames[values.currentGroupSkill - 1]}`);
-      lines.push(`Current reinforcements: ${namesForPackedGogma(packGogmaIds(values.currentReinforcements))}`);
+      lines.push(`Current reinforcements: ${namesForCurrentReinforcements(values)}`);
       if (values.includeSkills) {
         lines.push(result.skillResets > 0 ? `Reset Skills ${result.skillResets} time(s).` : "Current skills already match the target.");
       }
@@ -803,6 +851,9 @@ function init() {
     updateWeaponIcon();
   });
   document.querySelectorAll('input[name="planMode"]').forEach((input) => input.addEventListener("change", updatePlanMode));
+  document.getElementById("existingWeaponCatalog").addEventListener("change", (event) => {
+    applyExistingWeapon(importedExistingWeapons[Number(event.target.value)]);
+  });
   document.getElementById("calculateButton").addEventListener("click", renderResult);
   document.getElementById("exportCsvButton").addEventListener("click", exportCsv);
   document.getElementById("sampleButton").addEventListener("click", () => renderResult());
