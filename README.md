@@ -9,7 +9,8 @@ the same state the game uses and calculates the route from it.
 
 ## How Artian Weapons Work
 
-Here is the whole process in plain terms:
+In-game, Artian weapons are not rolled one visible upgrade at a time. The game
+uses saved RNG streams and consumes them when specific smithy actions happen:
 
 1. **Choose Artian parts and forge the base weapon.** The parts determine the
    weapon type, element or status, and production bonuses shown on the weapon.
@@ -20,12 +21,13 @@ Here is the whole process in plain terms:
 3. **The part recipe controls what base bonuses are possible.** Each part has
    an element/status and either Attack or Affinity Infusion. Two matching
    attributes determine the forged weapon's attribute; three matching
-   attributes also grant Element Infusion. The planner derives the base bonus
-   pool from these choices and rejects an impossible target.
-4. **Forging advances a predetermined stream.** The stream is based on the save
-   state, weapon type, and rarity. Forging another weapon of that type and
-   rarity advances to the next result. Reloading an earlier save restores the
-   earlier stream position.
+   attributes also grant Element Infusion. Those material choices change which
+   bonus families can appear on the forged weapon.
+4. **Forging advances a predetermined base reinforcement stream.** The stream
+   is tied to the save state, weapon type, and rarity. Forging any weapon with
+   the same weapon type and rarity consumes the next result from that stream,
+   even if the element or infusions are different. Reloading an earlier save
+   restores the earlier stream position.
 5. **Upgrade the completed base weapon into a Gogma Artian weapon.** Base
    Attack Boost I, Affinity Boost I, and Element Boost I become their
    corresponding Gogma level-I bonuses. Sharpness Boost keeps the same name.
@@ -36,11 +38,11 @@ Here is the whole process in plain terms:
 7. **Gogma reinforcement amendments use another independent stream.**
    **Reset Bonuses** replaces all five bonuses from the full eligible pool.
    **Keep Bonuses** preserves each slot's bonus family and rerolls its permitted
-   tier. The planner can combine both modes to find the shortest route.
+   tier.
 
-The skill and Gogma reinforcement counters are independent. Spending actions
-on one does not advance the other. The full weapon plan reads the saved counters
-directly and calculates the route from the selected final recipe.
+The base forge stream, Gogma skill stream, and Gogma reinforcement amendment
+stream are separate. Spending actions on one stream does not advance the
+others.
 
 Forging any weapon of the same weapon type and rarity advances the shared base
 forge stream. The disposable weapons do not need the same element or infusion
@@ -52,7 +54,7 @@ the target forge.
 ## What Works
 
 - Predicting Gogma Artian set and group skill resets.
-- Selecting a desired set skill and group skill in game.
+- Selecting a desired Gogma set skill and group skill.
 - Showing the exact number of **Reset Skills** actions needed.
 - Predicting the five base Artian reinforcement bonuses assigned when a weapon
   is forged.
@@ -73,15 +75,6 @@ the target forge.
   Calculating a plan does not consume parts or require a test forge.
 - Estimating Artian parts, reinforcement points, Gogma material points, Tarred
   Devices, and zenny for the calculated route.
-
-## Still In Development
-
-- Verifying the recipe-derived base pools for every raw, element, and status
-  combination. The elemental Insect Glaive path is implemented; other recipes
-  remain experimental until checked against in-game results.
-
-The full-route search added in v0.3.0 is experimental until its upgrade-time
-skill and Gogma results have been validated against a complete in-game route.
 
 ## Choose Targets
 
@@ -129,15 +122,16 @@ in a browser or hosted with GitHub Pages:
 index.html
 ```
 
-In the mod, enable **Show web calculator values**, press **Calculate full
-plan**, then press **Export web calculator values**. The mod writes:
+In the mod, press **Calculate full plan**, then use **Export web calculator
+values** in the **Export** section. The mod writes:
 
 ```text
 <Monster Hunter Wilds>/reframework/data/Gogma Artian Roll Planner/GogmaWebCalculatorValues.json
 ```
 
-Paste that file's contents into the web page's import box to reuse the same
-seed, counters, recipe, and targets outside the game.
+Import that file on the web page by selecting it, dragging it onto the import
+box, pasting the file, or pasting its JSON text. The web calculator then reuses
+the same seed, counters, recipe, and targets outside the game.
 
 ## Base Artian Results
 
@@ -162,10 +156,10 @@ Press **Calculate full plan** after changing any reinforcement target.
 
 Element does not select a separate base reinforcement counter. The counter is
 keyed by weapon type and rarity, so forging another element of the same weapon
-type advances the same sequence. The predictor uses the game's base bonus pool
+type advances the same sequence. The mod uses the game's base bonus pool
 and removes Sharpness after it has been selected twice while generating the
 five bonuses. Material combinations can change the available bonus families;
-the planner derives that pool without consuming a weapon.
+the mod derives that pool without consuming a weapon.
 
 If the selected target asks for an excluded family or more copies than the
 recipe permits, the UI reports **Impossible for this recipe** instead of
@@ -179,10 +173,6 @@ searching thousands of unreachable forge results.
    Gogma set/group skills. The reinforcement target itself determines whether
    the weapon may stop at base Artian or must continue to Gogma.
 3. Press **Calculate full plan**. No weapon needs to be forged first.
-
-If the game exposes several character saves with different Artian forge
-counters, choose the currently loaded character from **Saved character**. The
-planner will not guess between different counters.
 
 The calculation takes a fixed snapshot of the saved counters. It may tell you
 to forge disposable weapons first. Those advance-forges only need to match the
@@ -214,11 +204,9 @@ list. Press **Calculate full plan** again only when you intentionally want to
 start from the current save counters or after changing the targets. Runtime
 validation after the upgrade does not rewrite that snapshot.
 
-The saved creation counter is the index consumed by the next weapon. The
-planner reacquires the active save object whenever a plan is calculated, then
-advances the base reinforcement RNG by `creation index * 10` before drawing the
-weapon's five bonuses. This matters after reloading a save because the game
-replaces its live save-data objects.
+The mod reads the currently loaded character's saved creation counter directly
+when a plan is calculated. This matters after reloading a save because the
+game replaces its live save-data objects.
 
 ## Saving Settings
 
@@ -255,16 +243,17 @@ the estimate is marked partial and does not yet include skill-reset costs.
 
 ## Export To Google Sheets
 
-Use each section's **Include in plan** checkbox to choose which stages appear
-in the combined plan and exported table. When both Gogma stages are selected,
-their validated shortest routes are combined. Their RNG counters are
-independent, so interleaving the actions cannot reduce the minimum total.
+Use **Include reinforcements in plan** and **Include set/group skills in plan**
+to choose which stages appear in the combined plan and exported table. When
+both Gogma stages are selected, their validated shortest routes are combined.
+Their RNG counters are independent, so interleaving the actions cannot reduce
+the minimum total.
 
 Press **Export predictions to CSV** after identifying and calculating the
 streams you want to include. The mod writes:
 
 ```text
-<Monster Hunter Wilds>/reframework/data/Gogma Artian Roll Planner/GogRollPlannerPredictions.csv
+<Monster Hunter Wilds>/reframework/data/Gogma Artian Roll Planner/GogmaArtianRollPlannerPredictions.csv
 ```
 
 In Google Sheets, use **File > Import > Upload** and select that CSV file. The
