@@ -1,6 +1,6 @@
-# Gog Roll Planner
+# Gogma Artian Roll Planner
 
-Gog Roll Planner is a REFramework Lua mod for Monster Hunter Wilds. It reads the
+Gogma Artian Roll Planner is a REFramework Lua mod for Monster Hunter Wilds. It reads the
 game's predetermined Artian weapon streams and tells you how many skill resets
 or weapon forges are needed to reach a selected result.
 
@@ -118,7 +118,7 @@ directory. The resulting script path should be:
 If the game and REFramework are already running, open the REFramework menu with
 `Insert` and select **Reset scripts**.
 
-The mod appears under **Script Generated UI > Gog Roll Planner**.
+The mod appears under **Script Generated UI > Gogma Artian Roll Planner**.
 
 ## Web Calculator
 
@@ -264,7 +264,7 @@ Press **Export predictions to CSV** after identifying and calculating the
 streams you want to include. The mod writes:
 
 ```text
-<Monster Hunter Wilds>/reframework/data/Gog Roll Planner/GogRollPlannerPredictions.csv
+<Monster Hunter Wilds>/reframework/data/Gogma Artian Roll Planner/GogRollPlannerPredictions.csv
 ```
 
 In Google Sheets, use **File > Import > Upload** and select that CSV file. The

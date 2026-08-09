@@ -2,7 +2,7 @@
 -- Artian/Gogma skill and reinforcement route planner for Monster Hunter Wilds.
 
 local MOD_NAME = "Gogma Artian Roll Planner"
-local VERSION = "0.8.4"
+local VERSION = "0.8.14"
 local CONFIG_PATH = "GogmaArtianRollPlanner.json"
 local EXPORT_DIRECTORY = "Gogma Artian Roll Planner"
 local EXPORT_PATH = EXPORT_DIRECTORY .. "/GogmaArtianRollPlannerPredictions.csv"
@@ -32,7 +32,6 @@ local state = {
     include_skill_predictions = true,
     include_gogma_predictions = true,
     include_reinforcement_predictions = true,
-    show_web_calculator_values = false,
     desired_set_skill = 1,
     desired_group_skill = 1,
     desired_base_reinforcement_1 = 1,
@@ -362,7 +361,6 @@ local function save_config()
         enabled = state.enabled,
         include_skill_predictions = state.include_skill_predictions,
         include_reinforcement_predictions = state.include_reinforcement_predictions,
-        show_web_calculator_values = state.show_web_calculator_values,
         desired_set_skill = state.desired_set_skill,
         desired_group_skill = state.desired_group_skill,
         target_weapon_type = state.target_weapon_type,
@@ -2271,6 +2269,14 @@ local function draw_colored_text(text, color)
     end
 end
 
+local function draw_export_status(text)
+    if text:sub(1, 13) == "Export failed" then
+        draw_colored_text(text, 0xff8080ff)
+    else
+        imgui.text(text)
+    end
+end
+
 local function web_calculator_values_text()
     local final_attribute = derive_material_recipe()
     local skill_capture = state.full_plan_skill_capture or {}
@@ -2311,6 +2317,11 @@ local function web_calculator_values_text()
 end
 
 local function write_web_calculator_values()
+    if state.full_plan_forges == nil then
+        state.web_values_status = "Export failed: calculate a full plan first."
+        return
+    end
+
     local path = resolve_data_path(WEB_VALUES_PATH)
     local file, err = io.open(path, "w")
     if file == nil then
@@ -2385,9 +2396,6 @@ local function draw_from_scratch_plan()
     end
     imgui.separator()
     draw_colored_text("Calculated route", 0xff73d7ff)
-    draw_checkbox("Show web calculator values##web_values",
-        "show_web_calculator_values")
-    imgui.text("The final forge uses these materials; earlier forges may use any parts.")
     if state.full_plan_status ~= nil then
         local color = state.full_plan_forges ~= nil and 0xff80ff80 or 0xff80c0ff
         draw_colored_text(state.full_plan_status, color)
@@ -2410,8 +2418,6 @@ local function draw_from_scratch_plan()
         .. attribute_names[state.target_attribute] .. " "
         .. weapon_type_names[state.target_weapon_type] .. " with the selected materials.")
     step = step + 1
-    imgui.text("   Base result: "
-        .. format_base_reinforcements(state.full_plan_base_value))
     if state.include_skill_predictions or state.include_gogma_predictions then
         imgui.text(tostring(step) .. ". Reinforce it to 5/5, then upgrade it to Gogma Artian.")
         step = step + 1
@@ -2419,6 +2425,8 @@ local function draw_from_scratch_plan()
         imgui.text(tostring(step) .. ". Reinforce it to 5/5. The base Artian weapon is complete.")
         step = step + 1
     end
+    imgui.text("   Base result: "
+        .. format_base_reinforcements(state.full_plan_base_value))
 
     if state.include_skill_predictions then
         if state.full_plan_skills_pending then
@@ -2476,17 +2484,6 @@ local function draw_from_scratch_plan()
             total_line = total_line .. " (skill-reset cost pending)"
         end
         imgui.text(total_line)
-    end
-    if state.show_web_calculator_values then
-        imgui.separator()
-        imgui.text("Web calculator values")
-        if imgui.button("Export web calculator values") then
-            write_web_calculator_values()
-        end
-        imgui.text("File: reframework/data/Gogma Artian Roll Planner/GogmaWebCalculatorValues.json")
-        if state.web_values_status ~= nil then
-            imgui.text(state.web_values_status)
-        end
     end
 end
 
@@ -2685,8 +2682,16 @@ local function draw_export()
         end
     end
     if state.export_status ~= nil then
-        imgui.text(state.export_status)
+        draw_export_status(state.export_status)
     end
+    if imgui.button("Export web calculator values") then
+        write_web_calculator_values()
+    end
+    if state.web_values_status ~= nil then
+        draw_export_status(state.web_values_status)
+    end
+    imgui.text("")
+    imgui.text("")
 end
 
 re.on_config_save(save_config)
@@ -2698,10 +2703,12 @@ re.on_frame(function()
 end)
 
 re.on_draw_ui(function()
-    if not imgui.tree_node(MOD_NAME .. " v" .. VERSION) then
+    if not imgui.tree_node(MOD_NAME) then
         return
     end
     local ok, err = pcall(function()
+        imgui.text("Version " .. VERSION)
+        imgui.separator()
         draw_checkbox("Enable", "enabled")
         imgui.separator()
         draw_quick_start()
