@@ -16,6 +16,7 @@ const COSTS = {
 let lastCalculation = null;
 let importedExistingWeapons = [];
 let currentExistingReinforcementTier = "gogma";
+let currentExistingAttributeForce = null;
 
 const setSkillNames = [
   "Arkveld's Hunger", "Blangonga's Spirit", "Doshaguma's Might",
@@ -133,6 +134,13 @@ function sameMultiset(a, b) {
   for (const x of a) counts.set(x, (counts.get(x) || 0) + 1);
   for (const x of b) counts.set(x, (counts.get(x) || 0) - 1);
   return [...counts.values()].every((x) => x === 0);
+}
+function sameGogmaFamilies(a, b) {
+  if (a.length !== b.length) return false;
+  const counts = new Map();
+  for (const id of a) counts.set(familyId(id), (counts.get(familyId(id)) || 0) + 1);
+  for (const id of b) counts.set(familyId(id), (counts.get(familyId(id)) || 0) - 1);
+  return [...counts.values()].every((count) => count === 0);
 }
 function skillType(setName, groupName) {
   return `${setName}||${groupName}`;
@@ -279,6 +287,18 @@ function findGogmaRoute(capture, currentValue, target, limit) {
   }
   return null;
 }
+function findKeepGogmaRoute(capture, currentValue, target, limit) {
+  let r = initializeGogma(capture);
+  let packed = currentValue;
+  for (let distance = 1; distance <= limit; distance++) {
+    const next = simulateGogma({...r}, packed, 1);
+    if (!next) return null;
+    if (sameMultiset(next.ids, target)) return {distance, value: next.packed, resets: 0, keeps: distance};
+    packed = next.packed;
+    r = advance(r, 10);
+  }
+  return null;
+}
 function namesForPackedBase(packed) {
   const names = [];
   for (let i = 0; i < 5; i++) {
@@ -375,7 +395,9 @@ function calculateExisting(values) {
   const targetMode = reinforcementTargetMode(values.desiredReinforcements);
   const desiredKey = skillType(setSkillNames[values.desiredSetSkill - 1], groupSkillNames[values.desiredGroupSkill - 1]);
   const currentKey = skillType(setSkillNames[values.currentSetSkill - 1], groupSkillNames[values.currentGroupSkill - 1]);
-  const attribute = skillAttributeForce(values.existingAttribute);
+  const attribute = values.attributeForce != null
+    ? values.attributeForce
+    : skillAttributeForce(values.existingAttribute);
   let skillResets = 0;
   let reinforcementRoute = null;
   let total = 0;
@@ -398,7 +420,11 @@ function calculateExisting(values) {
     if (sameMultiset(unpackGogma(currentValue), target)) {
       reinforcementRoute = {distance: 0, resets: 0, keeps: 0, value: currentValue};
     } else {
-      reinforcementRoute = findGogmaRoute({...values, attribute}, currentValue, target, 5000);
+      const currentIds = unpackGogma(currentValue);
+      reinforcementRoute = sameGogmaFamilies(currentIds, target)
+        ? findKeepGogmaRoute({...values, attribute}, currentValue, target, 5000)
+        : null;
+      if (!reinforcementRoute) reinforcementRoute = findGogmaRoute({...values, attribute}, currentValue, target, 5000);
       if (!reinforcementRoute) throw new Error("Reinforcement target not found within 5000 amendments.");
     }
     total += reinforcementRoute.distance;
@@ -680,6 +706,7 @@ function applyExistingWeapon(weapon) {
   document.getElementById("weaponType").value = weapon.weaponType;
   updateWeaponIcon();
   document.getElementById("existingAttribute").value = weapon.existingAttribute;
+  currentExistingAttributeForce = weapon.attributeForce != null ? Number(weapon.attributeForce) : null;
   document.getElementById("currentSetSkill").value = weapon.currentSetSkill;
   document.getElementById("currentGroupSkill").value = weapon.currentGroupSkill;
   buildCurrentReinforcements(weapon.currentReinforcementTier || "gogma", weapon.currentReinforcements || []);
@@ -702,6 +729,7 @@ function getValues() {
     includeSkills: document.getElementById("includeSkills").checked,
     includeReinforcements: document.getElementById("includeReinforcements").checked,
     existingAttribute: Number(document.getElementById("existingAttribute").value),
+    attributeForce: currentExistingAttributeForce,
     currentSetSkill: Number(document.getElementById("currentSetSkill").value),
     currentGroupSkill: Number(document.getElementById("currentGroupSkill").value),
     currentReinforcements: [0, 1, 2, 3, 4].map((i) => Number(document.getElementById(`currentReinforcement${i}`).value)),
@@ -724,6 +752,7 @@ function setValues(v) {
   if (v.includeSkills != null) document.getElementById("includeSkills").checked = Boolean(v.includeSkills);
   if (v.includeReinforcements != null) document.getElementById("includeReinforcements").checked = Boolean(v.includeReinforcements);
   if (v.existingAttribute != null) document.getElementById("existingAttribute").value = v.existingAttribute;
+  currentExistingAttributeForce = v.attributeForce != null ? Number(v.attributeForce) : null;
   if (v.currentSetSkill != null) document.getElementById("currentSetSkill").value = v.currentSetSkill;
   if (v.currentGroupSkill != null) document.getElementById("currentGroupSkill").value = v.currentGroupSkill;
   buildCurrentReinforcements(v.currentReinforcementTier || "gogma", v.currentReinforcements || [15, 15, 12, 16, 10]);
@@ -853,6 +882,9 @@ function init() {
   document.querySelectorAll('input[name="planMode"]').forEach((input) => input.addEventListener("change", updatePlanMode));
   document.getElementById("existingWeaponCatalog").addEventListener("change", (event) => {
     applyExistingWeapon(importedExistingWeapons[Number(event.target.value)]);
+  });
+  document.getElementById("existingAttribute").addEventListener("change", () => {
+    currentExistingAttributeForce = null;
   });
   document.getElementById("calculateButton").addEventListener("click", renderResult);
   document.getElementById("exportCsvButton").addEventListener("click", exportCsv);

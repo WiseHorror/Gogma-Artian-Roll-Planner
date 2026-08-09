@@ -706,7 +706,9 @@ local function attribute_force_from_performance_type(performance_type)
         [22611] = skill_attribute_force_for_recipe(2), -- Fire
         [31749] = skill_attribute_force_for_recipe(3), -- Water
         [22190] = skill_attribute_force_for_recipe(4), -- Thunder
-        [29119] = skill_attribute_force_for_recipe(5), -- Ice
+        -- Ice displays as attribute 5, but its existing-weapon roll seed uses
+        -- force 3. This is distinct from the material recipe selector value.
+        [29119] = 3, -- Ice
         [18812] = skill_attribute_force_for_recipe(6), -- Dragon
         [27364] = skill_attribute_force_for_recipe(7), -- Poison
         [19855] = skill_attribute_force_for_recipe(8), -- Paralysis
@@ -723,6 +725,22 @@ local function attribute_force_from_performance_type(performance_type)
         return performance_type
     end
     return nil
+end
+
+local function attribute_index_from_performance_type(performance_type)
+    local known = {
+        [31204] = 1, -- None
+        [22611] = 2, -- Fire
+        [31749] = 3, -- Water
+        [22190] = 4, -- Thunder
+        [29119] = 5, -- Ice
+        [18812] = 6, -- Dragon
+        [27364] = 7, -- Poison
+        [19855] = 8, -- Paralysis
+        [19961] = 9, -- Sleep
+        [410] = 10, -- Blast
+    }
+    return known[tonumber(performance_type)]
 end
 
 local function read_existing_gogma_weapons()
@@ -758,6 +776,7 @@ local function read_existing_gogma_weapons()
                     and bonus_by_grinding_low > 0 and performance_type ~= nil
                     and performance_type >= 0 then
                 local attribute_force = attribute_force_from_performance_type(performance_type)
+                local attribute_index = attribute_index_from_performance_type(performance_type)
                 if attribute_force_method ~= nil then
                     local ok, value = pcall(function()
                         return attribute_force_method:call(equip_work)
@@ -775,12 +794,21 @@ local function read_existing_gogma_weapons()
                         skill_type = table_skill_type_from_runtime(to_u32_number(value))
                     end
                 end
-                if attribute_force ~= nil and skill_type ~= nil then
+                if attribute_force ~= nil and attribute_index == nil then
+                    for candidate, _ in ipairs(attribute_names) do
+                        if skill_attribute_force_for_recipe(candidate) == attribute_force then
+                            attribute_index = candidate
+                            break
+                        end
+                    end
+                end
+                if attribute_force ~= nil and attribute_index ~= nil and skill_type ~= nil then
                     local set_name, group_name = names_for_artian_skill_type(skill_type)
                     local label = "#" .. tostring(index + 1) .. " "
                         .. tostring(weapon_type_names[weapon_type + 1]
                             or ("Weapon " .. tostring(weapon_type)))
-                        .. " / " .. attribute_name_for_force(attribute_force)
+                        .. " / " .. tostring(attribute_names[attribute_index]
+                            or ("Attribute " .. tostring(attribute_index)))
                     if set_name ~= nil and group_name ~= nil then
                         label = label .. " / " .. set_name .. " / " .. group_name
                     end
@@ -789,6 +817,7 @@ local function read_existing_gogma_weapons()
                         label = label,
                         index = index,
                         weapon_type = weapon_type,
+                        attribute_index = attribute_index,
                         attribute_force = attribute_force,
                         skill_type = skill_type,
                         gogma_value = bonus_by_grinding,
@@ -798,6 +827,25 @@ local function read_existing_gogma_weapons()
         end
     end
     return weapons, nil
+end
+
+local function refresh_existing_weapon_list()
+    local previously_selected = state.existing_weapons ~= nil
+        and state.existing_weapons[state.existing_weapon_index] or nil
+    local weapons, err = read_existing_gogma_weapons()
+    state.existing_weapons = weapons
+    state.existing_weapon_index = clamp_index(state.existing_weapon_index, weapons)
+    if previously_selected ~= nil then
+        for index, weapon in ipairs(weapons) do
+            if weapon.index == previously_selected.index then
+                state.existing_weapon_index = index
+                break
+            end
+        end
+    end
+    state.existing_weapon_status = err or ("Found " .. tostring(#weapons)
+        .. " existing Gogma/Artian weapon(s).")
+    return err == nil
 end
 
 local function gogma_repeat_penalty(id)
@@ -1226,6 +1274,25 @@ local function same_multiset(left, right)
     return true
 end
 
+local function same_gogma_families(left, right)
+    if #(left or {}) ~= #(right or {}) then
+        return false
+    end
+    local counts = {}
+    for _, id in ipairs(left) do
+        local family = gogma_family_id(id)
+        counts[family] = (counts[family] or 0) + 1
+    end
+    for _, id in ipairs(right) do
+        local family = gogma_family_id(id)
+        counts[family] = (counts[family] or 0) - 1
+        if counts[family] < 0 then
+            return false
+        end
+    end
+    return true
+end
+
 local function selected_base_bonus_ids()
     local values = {}
     for slot = 1, 5 do
@@ -1439,6 +1506,28 @@ local function find_mixed_gogma_route_from(capture, current_value, target, limit
         end
     end
     return nil, nil, nil
+end
+
+local function find_keep_gogma_route_from(capture, current_value, target, limit)
+    local rng = initialize_gogma_rng(capture)
+    if rng == nil then
+        return nil, nil
+    end
+    local packed = current_value
+    for distance = 1, limit or 5000 do
+        local result, ids = simulate_gogma_roll(copy_rng(rng), packed, 1)
+        if result == nil then
+            return nil, nil
+        end
+        if same_multiset(ids, target) then
+            return distance, result
+        end
+        packed = result
+        for _ = 1, 10 do
+            rng.x, rng.y, rng.z, rng.w = rng_step(rng.x, rng.y, rng.z, rng.w)
+        end
+    end
+    return nil, nil
 end
 
 local function find_mixed_gogma_route(target)
@@ -1884,6 +1973,11 @@ local function calculate_existing_weapon_route()
     state.existing_rng_state = nil
     state.existing_total = nil
 
+    if not refresh_existing_weapon_list() then
+        state.existing_route_status = state.existing_weapon_status
+        return
+    end
+
     local mode, target_error = sync_reinforcement_target()
     if target_error ~= nil then
         state.existing_route_status = target_error
@@ -1960,13 +2054,25 @@ local function calculate_existing_weapon_route()
             state.existing_gogma_keeps = 0
             state.existing_gogma_value = current_value
         else
-            local distance, value, last_reset = find_mixed_gogma_route_from({
+            local capture = {
                 base_seed = rng_state.base_seed,
                 weapon_type = selected_weapon.weapon_type,
                 attribute_force = selected_weapon.attribute_force,
                 gogma_counter = rng_state.gogma_counter,
                 counter_gate = rng_state.counter_gate,
-            }, current_value, target, 5000)
+            }
+            local current_ids = unpack_gogma_bonus_ids(current_value)
+            local distance, value, last_reset
+            if same_gogma_families(current_ids, target) then
+                distance, value = find_keep_gogma_route_from(
+                    capture, current_value, target, 5000
+                )
+            end
+            if distance == nil then
+                distance, value, last_reset = find_mixed_gogma_route_from(
+                    capture, current_value, target, 5000
+                )
+            end
             if distance == nil then
                 state.existing_route_status =
                     "The selected Gogma reinforcement target was not found within 5000 amendments."
@@ -2693,7 +2799,8 @@ local function existing_weapon_web_json(weapon)
     end
     return "{"
         .. '"weaponType":' .. tostring(weapon.weapon_type) .. ","
-        .. '"existingAttribute":' .. tostring(attribute_index_for_force(weapon.attribute_force)) .. ","
+        .. '"existingAttribute":' .. tostring(weapon.attribute_index
+            or attribute_index_for_force(weapon.attribute_force)) .. ","
         .. '"attributeForce":' .. tostring(weapon.attribute_force) .. ","
         .. '"currentSetSkill":' .. tostring(set_index) .. ","
         .. '"currentGroupSkill":' .. tostring(group_index) .. ","
@@ -2779,7 +2886,8 @@ local function existing_weapon_web_calculator_values_text(selected_weapon)
         '  "selectedExistingWeapon": ' .. tostring(selected_export_index) .. ",",
         '  "existingWeapons": [' .. table.concat(weapon_json, ",") .. "],",
         '  "weaponType": ' .. tostring(selected_weapon.weapon_type) .. ",",
-        '  "existingAttribute": ' .. tostring(attribute_index_for_force(selected_weapon.attribute_force)) .. ",",
+        '  "existingAttribute": ' .. tostring(selected_weapon.attribute_index
+            or attribute_index_for_force(selected_weapon.attribute_force)) .. ",",
         '  "attributeForce": ' .. tostring(selected_weapon.attribute_force) .. ",",
         '  "currentSetSkill": ' .. tostring(selected_set_index) .. ",",
         '  "currentGroupSkill": ' .. tostring(selected_group_index) .. ",",
@@ -3005,20 +3113,13 @@ end
 local function draw_existing_weapon_plan()
     draw_colored_text("Existing weapon", 0xff73d7ff)
     imgui.text("Choose an upgraded weapon from the loaded character's equipment box.")
+    imgui.text("After an amendment, confirm or cancel the smithy preview before calculating again.")
 
     if imgui.button("Refresh existing weapons") then
-        local weapons, err = read_existing_gogma_weapons()
-        state.existing_weapons = weapons
-        state.existing_weapon_index = clamp_index(state.existing_weapon_index, weapons)
-        state.existing_weapon_status = err or ("Found " .. tostring(#weapons)
-            .. " existing Gogma/Artian weapon(s).")
+        refresh_existing_weapon_list()
     end
     if state.existing_weapons == nil then
-        local weapons, err = read_existing_gogma_weapons()
-        state.existing_weapons = weapons
-        state.existing_weapon_index = clamp_index(state.existing_weapon_index, weapons)
-        state.existing_weapon_status = err or ("Found " .. tostring(#weapons)
-            .. " existing Gogma/Artian weapon(s).")
+        refresh_existing_weapon_list()
     end
     if state.existing_weapon_status ~= nil then
         imgui.text(state.existing_weapon_status)
@@ -3312,7 +3413,8 @@ local function export_existing_prediction_rows()
             "Rarity-8 Artian parts", "Tarred Devices" },
         { 1, "", "Existing weapon", "Starting state",
             tostring(weapon_type_names[selected_weapon.weapon_type + 1] or "Weapon")
-                .. " / " .. attribute_name_for_force(selected_weapon.attribute_force)
+                .. " / " .. tostring(attribute_names[selected_weapon.attribute_index]
+                    or attribute_name_for_force(selected_weapon.attribute_force))
                 .. " / " .. tostring(set_name) .. " / " .. tostring(group_name)
                 .. " / " .. format_existing_reinforcements(selected_weapon.gogma_value),
             "", 0, 0, 0, 0, 0 },

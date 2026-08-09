@@ -79,6 +79,10 @@ Skills**, **Amend (Reset Bonuses)**, and **Amend (Keep Bonuses)** needed for
 the shared target. Reinforcement planning for an existing weapon requires a
 Gogma-tier target and a weapon already upgraded to Gogma Artian.
 
+After an amendment, confirm or cancel the smithy preview before calculating
+again. Existing weapon calculation refreshes the equipment list automatically,
+but the preview has not yet written its result to that list.
+
 Each calculated route is a fixed snapshot of the save counters at calculation
 time. Calculate again after changing targets or intentionally
 advancing/reloading the save.
