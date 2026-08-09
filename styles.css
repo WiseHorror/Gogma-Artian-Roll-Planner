@@ -73,6 +73,12 @@ h3 {
   letter-spacing: 0.08em;
 }
 
+h4 {
+  color: var(--accent);
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
 .section-icon,
 .mini-icon,
 .part-icon {
@@ -171,6 +177,62 @@ p {
 .calculator-panel {
   display: grid;
   gap: 2px;
+}
+
+.plan-mode {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--subpanel);
+  border: 1px solid #263044;
+  border-radius: 6px;
+}
+
+.plan-mode-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+.plan-mode label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.plan-mode input {
+  width: auto;
+  accent-color: var(--accent);
+}
+
+.section-copy {
+  font-size: 13px;
+  margin: -4px 0 14px;
+}
+
+.target-group + .target-group {
+  border-top: 1px solid #273146;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.target-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.target-toggle input {
+  width: auto;
+  accent-color: var(--accent);
 }
 
 .import-panel textarea {
@@ -402,5 +464,10 @@ button.secondary:hover {
   .materials,
   .reinforcement-grid {
     grid-template-columns: 1fr;
+  }
+
+  .plan-mode {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

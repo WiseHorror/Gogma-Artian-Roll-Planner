@@ -2,7 +2,7 @@
 -- Artian/Gogma skill and reinforcement route planner for Monster Hunter Wilds.
 
 local MOD_NAME = "Gogma Artian Roll Planner"
-local VERSION = "0.8.15"
+local VERSION = "0.8.30"
 local CONFIG_PATH = "GogmaArtianRollPlanner.json"
 local EXPORT_DIRECTORY = "Gogma Artian Roll Planner"
 local EXPORT_PATH = EXPORT_DIRECTORY .. "/GogmaArtianRollPlannerPredictions.csv"
@@ -32,6 +32,7 @@ local state = {
     include_skill_predictions = true,
     include_gogma_predictions = true,
     include_reinforcement_predictions = true,
+    plan_mode = 1,
     desired_set_skill = 1,
     desired_group_skill = 1,
     desired_base_reinforcement_1 = 1,
@@ -57,6 +58,18 @@ local state = {
     material_infusion_1 = 1,
     material_infusion_2 = 1,
     material_infusion_3 = 1,
+    existing_weapon_index = 1,
+    existing_weapons = nil,
+    existing_weapon_status = nil,
+    existing_route_status = nil,
+    existing_skill_resets = nil,
+    existing_gogma_resets = nil,
+    existing_gogma_keeps = nil,
+    existing_gogma_value = nil,
+    existing_start_gogma_value = nil,
+    existing_skill_capture = nil,
+    existing_gogma_capture = nil,
+    existing_total = nil,
     last_artian_skill_type = nil,
     predicted_skill_type = nil,
     exact_reroll_distance = nil,
@@ -221,6 +234,12 @@ local base_reinforcement_id_names = {
     [7] = "Sharpness Boost",
     [8] = "Affinity Boost I",
 }
+local saved_base_reinforcement_id_names = {
+    [4] = "Attack Boost I",
+    [6] = "Element Boost I",
+    [7] = "Sharpness Boost",
+    [8] = "Affinity Boost I",
+}
 local base_reinforcement_selector_ids = { 6, 8, 4, 7 }
 local base_reinforcement_rng_ids = { 4, 6, 7, 8 }
 local base_reinforcement_names = {}
@@ -276,6 +295,11 @@ local lottery_method = nil
 local base_bonus_method = nil
 local attribute_force_method = nil
 local artian_skill_type_method = nil
+local resolve_artian_create_param
+local collection_item
+local try_object_field
+local skill_attribute_force_for_recipe
+local packed_reinforcement_tier
 local full_plan_coroutine = nil
 local full_plan_yield_enabled = false
 local maybe_yield_full_plan
@@ -309,6 +333,20 @@ local function table_skill_type_from_runtime(value)
     return value
 end
 
+local function to_u32_number(value)
+    if value == nil then
+        return nil
+    end
+    local direct = tonumber(value)
+    if direct ~= nil then
+        return direct & UINT32_MASK
+    end
+    local ok, converted = pcall(function()
+        return tonumber(sdk.to_int64(value) & UINT32_MASK)
+    end)
+    return ok and converted or nil
+end
+
 local function clamp_index(value, values)
     value = tonumber(value) or 1
     return math.max(1, math.min(#values, math.floor(value)))
@@ -327,6 +365,7 @@ local function load_config()
     end
     state.desired_set_skill = clamp_index(state.desired_set_skill, set_skill_names)
     state.desired_group_skill = clamp_index(state.desired_group_skill, group_skill_names)
+    state.plan_mode = clamp_index(state.plan_mode, { 1, 2 })
     state.target_weapon_type = clamp_index(state.target_weapon_type, weapon_type_names)
     state.target_attribute = clamp_index(state.target_attribute, attribute_names)
     for slot = 1, 3 do
@@ -361,6 +400,7 @@ local function save_config()
         enabled = state.enabled,
         include_skill_predictions = state.include_skill_predictions,
         include_reinforcement_predictions = state.include_reinforcement_predictions,
+        plan_mode = state.plan_mode,
         desired_set_skill = state.desired_set_skill,
         desired_group_skill = state.desired_group_skill,
         target_weapon_type = state.target_weapon_type,
@@ -580,6 +620,185 @@ local function selected_gogma_bonus_ids()
     return ids
 end
 
+local function attribute_name_for_force(attribute_force)
+    for index, _ in ipairs(attribute_names) do
+        if skill_attribute_force_for_recipe(index) == attribute_force then
+            return attribute_names[index]
+        end
+    end
+    return "Attribute " .. tostring(attribute_force)
+end
+
+local function equip_field_number(equip_work, field_name)
+    local ok, value = pcall(function()
+        return equip_work:get_field(field_name)
+    end)
+    return ok and to_u32_number(value) or nil
+end
+
+local function equip_field_full_number(equip_work, field_name)
+    local ok, value = pcall(function()
+        return equip_work:get_field(field_name)
+    end)
+    if not ok or value == nil then
+        return nil
+    end
+    local direct = tonumber(value)
+    if direct ~= nil then
+        return direct
+    end
+    local converted_ok, converted = pcall(function()
+        return tonumber(sdk.to_int64(value))
+    end)
+    if converted_ok and converted ~= nil then
+        return converted
+    end
+    local text = tostring(value)
+    local digits = text ~= nil and text:gsub("%D", "") or nil
+    return digits ~= nil and digits ~= "" and tonumber(digits) or nil
+end
+
+local function skill_type_from_bonus_by_creating(bonus_by_creating)
+    bonus_by_creating = tonumber(bonus_by_creating)
+    if bonus_by_creating == nil or bonus_by_creating <= 0 then
+        return nil
+    end
+    local skill_digit_1 = math.floor(bonus_by_creating / 10000000) % 10
+    local skill_digit_2 = math.floor(bonus_by_creating / 10000) % 10
+    local skill_digit_3 = math.floor(bonus_by_creating / 10) % 10
+    local fixed_skill_type = skill_digit_1 * 100 + skill_digit_2 * 10 + skill_digit_3
+    return table_skill_type_from_runtime(fixed_skill_type - 1)
+end
+
+local function compact_gogma_reinforcements(packed)
+    local parts = {}
+    local is_gogma = packed_reinforcement_tier(packed) == "gogma"
+    local ids = is_gogma and unpack_gogma_bonus_ids(packed) or {}
+    if not is_gogma then
+        local remaining = tonumber(packed) or 0
+        for _ = 1, 5 do
+            table.insert(ids, remaining % 1000)
+            remaining = math.floor(remaining / 1000)
+        end
+    end
+    for _, id in ipairs(ids) do
+        local name = is_gogma and (gogma_bonus_names_by_id[id]
+            or ("Bonus " .. tostring(id + 1)))
+            or (saved_base_reinforcement_id_names[id] or ("Bonus " .. tostring(id)))
+        name = name:gsub("Attack Boost", "Atk")
+            :gsub("Affinity Boost", "Aff")
+            :gsub("Element Boost", "Ele")
+            :gsub("Sharpness/Ammo Boost", "Sharp")
+            :gsub("Sharpness Boost", "Sharp")
+        table.insert(parts, name)
+    end
+    return table.concat(parts, ", ")
+end
+
+local function attribute_force_from_performance_type(performance_type)
+    performance_type = tonumber(performance_type)
+    if performance_type == nil then
+        return nil
+    end
+    local known = {
+        [31204] = skill_attribute_force_for_recipe(1), -- None
+        [22611] = skill_attribute_force_for_recipe(2), -- Fire
+        [31749] = skill_attribute_force_for_recipe(3), -- Water
+        [22190] = skill_attribute_force_for_recipe(4), -- Thunder
+        [29119] = skill_attribute_force_for_recipe(5), -- Ice
+        [18812] = skill_attribute_force_for_recipe(6), -- Dragon
+        [27364] = skill_attribute_force_for_recipe(7), -- Poison
+        [19855] = skill_attribute_force_for_recipe(8), -- Paralysis
+        [19961] = skill_attribute_force_for_recipe(9), -- Sleep
+        [410] = skill_attribute_force_for_recipe(10), -- Blast
+    }
+    if known[performance_type] ~= nil then
+        return known[performance_type]
+    end
+    -- Saved Artian equipment stores the performance type directly in FreeVal2.
+    -- The first ten values line up with the attribute-force values used by the
+    -- skill RNG seed; later values are non-elemental weapon performance variants.
+    if performance_type >= 1 and performance_type <= 9 then
+        return performance_type
+    end
+    return nil
+end
+
+local function read_existing_gogma_weapons()
+    local equip_param = resolve_artian_create_param ~= nil
+        and resolve_artian_create_param(state.target_weapon_type - 1, 7) or nil
+    if equip_param == nil then
+        return {}, "Could not find the loaded character's equipment box."
+    end
+    local equip_box = try_object_field(equip_param, "_EquipBox")
+    if equip_box == nil then
+        return {}, "Could not read _EquipBox from the loaded character."
+    end
+
+    local weapons = {}
+    local empty_streak = 0
+    for index = 0, 999 do
+        local equip_work = collection_item(equip_box, index)
+        if equip_work == nil then
+            empty_streak = empty_streak + 1
+            if empty_streak > 30 then
+                break
+            end
+        else
+            empty_streak = 0
+            local category = equip_field_number(equip_work, "Category_Gender") or 0
+            local weapon_type = equip_field_number(equip_work, "FreeVal0")
+            local bonus_by_creating = equip_field_number(equip_work, "BonusByCreating")
+            local bonus_by_grinding_low = equip_field_number(equip_work, "BonusByGrinding") or 0
+            local bonus_by_grinding = equip_field_full_number(equip_work, "BonusByGrinding")
+                or bonus_by_grinding_low
+            local performance_type = equip_field_number(equip_work, "FreeVal2")
+            if category % 16 == 13 and weapon_type ~= nil
+                    and bonus_by_grinding_low > 0 and performance_type ~= nil
+                    and performance_type >= 0 then
+                local attribute_force = attribute_force_from_performance_type(performance_type)
+                if attribute_force_method ~= nil then
+                    local ok, value = pcall(function()
+                        return attribute_force_method:call(equip_work)
+                    end)
+                    if ok and attribute_force == nil then
+                        attribute_force = to_u32_number(value)
+                    end
+                end
+                local skill_type = skill_type_from_bonus_by_creating(bonus_by_creating)
+                if artian_skill_type_method ~= nil then
+                    local ok, value = pcall(function()
+                        return artian_skill_type_method:call(equip_work)
+                    end)
+                    if ok and skill_type == nil then
+                        skill_type = table_skill_type_from_runtime(to_u32_number(value))
+                    end
+                end
+                if attribute_force ~= nil and skill_type ~= nil then
+                    local set_name, group_name = names_for_artian_skill_type(skill_type)
+                    local label = "#" .. tostring(index + 1) .. " "
+                        .. tostring(weapon_type_names[weapon_type + 1]
+                            or ("Weapon " .. tostring(weapon_type)))
+                        .. " / " .. attribute_name_for_force(attribute_force)
+                    if set_name ~= nil and group_name ~= nil then
+                        label = label .. " / " .. set_name .. " / " .. group_name
+                    end
+                    label = label .. " / " .. compact_gogma_reinforcements(bonus_by_grinding)
+                    table.insert(weapons, {
+                        label = label,
+                        index = index,
+                        weapon_type = weapon_type,
+                        attribute_force = attribute_force,
+                        skill_type = skill_type,
+                        gogma_value = bonus_by_grinding,
+                    })
+                end
+            end
+        end
+    end
+    return weapons, nil
+end
+
 local function gogma_repeat_penalty(id)
     return (id == 10 or id == 14 or id == 15 or id == 16) and 80 or 50
 end
@@ -796,7 +1015,7 @@ local function derive_material_recipe()
     return final_attribute, matching_parts == 3
 end
 
-local function skill_attribute_force_for_recipe(attribute)
+function skill_attribute_force_for_recipe(attribute)
     -- Element values observed so far match the selector index. Status values
     -- use the game's status enum range, where Poison starts at 6 and Blast is 9.
     return attribute >= 7 and attribute - 1 or attribute
@@ -1109,6 +1328,41 @@ local function format_gogma_reinforcements(packed)
     local names = {}
     for _, id in ipairs(unpack_gogma_bonus_ids(packed)) do
         table.insert(names, gogma_bonus_names_by_id[id] or ("Bonus " .. tostring(id + 1)))
+    end
+    return table.concat(names, " | ")
+end
+
+function packed_reinforcement_tier(packed)
+    packed = tonumber(packed)
+    if packed == nil then
+        return "unknown"
+    end
+    local has_gogma_id = false
+    for _ = 1, 5 do
+        local value = packed % 1000
+        if value >= 9 then
+            has_gogma_id = true
+            break
+        end
+        packed = math.floor(packed / 1000)
+    end
+    return has_gogma_id and "gogma" or "base"
+end
+
+local function format_existing_reinforcements(packed)
+    if packed_reinforcement_tier(packed) == "gogma" then
+        return format_gogma_reinforcements(packed)
+    end
+    packed = tonumber(packed)
+    if packed == nil then
+        return "unknown"
+    end
+    local names = {}
+    for _ = 1, 5 do
+        local id = packed % 1000
+        table.insert(names, saved_base_reinforcement_id_names[id]
+            or ("Bonus " .. tostring(id)))
+        packed = math.floor(packed / 1000)
     end
     return table.concat(names, " | ")
 end
@@ -1617,6 +1871,126 @@ local function calculate_from_scratch_plan()
     state.full_plan_status = nil
 end
 
+local function calculate_existing_weapon_route()
+    state.existing_route_status = nil
+    state.existing_skill_resets = nil
+    state.existing_gogma_resets = nil
+    state.existing_gogma_keeps = nil
+    state.existing_gogma_value = nil
+    state.existing_start_gogma_value = nil
+    state.existing_skill_capture = nil
+    state.existing_gogma_capture = nil
+    state.existing_total = nil
+
+    local mode, target_error = sync_reinforcement_target()
+    if target_error ~= nil then
+        state.existing_route_status = target_error
+        return
+    end
+
+    local rng_state = read_skill_rng_state()
+    if rng_state == nil then
+        state.existing_route_status =
+            "Existing weapon route needs Artian RNG state. Open the smithy, then try again."
+        return
+    end
+
+    local weapons = state.existing_weapons
+    local selected_weapon = weapons ~= nil and weapons[state.existing_weapon_index] or nil
+    if selected_weapon == nil then
+        state.existing_route_status =
+            "Refresh existing weapons, then choose a Gogma weapon."
+        return
+    end
+
+    local total = 0
+    if state.include_skill_predictions then
+        local current_type = selected_weapon.skill_type
+        local desired_type = desired_artian_skill_type()
+        if current_type == desired_type then
+            state.existing_skill_resets = 0
+        else
+            local ignored_prediction, distance = predict_skill_route({
+                base_seed = rng_state.base_seed,
+                weapon_type = selected_weapon.weapon_type,
+                attribute_force = selected_weapon.attribute_force,
+                counter = rng_state.counter,
+                counter_gate = rng_state.counter_gate,
+                counter_is_next = true,
+            }, desired_type)
+            if distance == nil then
+                state.existing_route_status =
+                    "The selected Gogma skill target was not found within 5000 resets."
+                return
+            end
+            state.existing_skill_resets = distance
+            state.existing_skill_capture = {
+                base_seed = rng_state.base_seed,
+                weapon_type = selected_weapon.weapon_type,
+                attribute_force = selected_weapon.attribute_force,
+                counter = rng_state.counter,
+                counter_gate = rng_state.counter_gate,
+                counter_is_next = true,
+            }
+            total = total + distance
+        end
+    else
+        state.existing_skill_resets = 0
+    end
+
+    if state.include_reinforcement_predictions then
+        if mode ~= "gogma" then
+            state.existing_route_status =
+                "Existing weapon amendments require a Gogma-tier reinforcement target."
+            return
+        end
+        local current_value = selected_weapon.gogma_value
+        state.existing_start_gogma_value = current_value
+        if packed_reinforcement_tier(current_value) ~= "gogma" then
+            state.existing_route_status =
+                "The selected weapon is still base Artian; upgrade it to Gogma before amendment planning."
+            return
+        end
+        local target = selected_gogma_bonus_ids()
+        if same_multiset(unpack_gogma_bonus_ids(current_value), target) then
+            state.existing_gogma_resets = 0
+            state.existing_gogma_keeps = 0
+            state.existing_gogma_value = current_value
+        else
+            local distance, value, last_reset = find_mixed_gogma_route_from({
+                base_seed = rng_state.base_seed,
+                weapon_type = selected_weapon.weapon_type,
+                attribute_force = selected_weapon.attribute_force,
+                gogma_counter = rng_state.gogma_counter,
+                counter_gate = rng_state.counter_gate,
+            }, current_value, target, 5000)
+            if distance == nil then
+                state.existing_route_status =
+                    "The selected Gogma reinforcement target was not found within 5000 amendments."
+                return
+            end
+            state.existing_gogma_resets = last_reset or 0
+            state.existing_gogma_keeps = last_reset ~= nil
+                and distance - last_reset or distance
+            state.existing_gogma_value = value
+            state.existing_gogma_capture = {
+                base_seed = rng_state.base_seed,
+                weapon_type = selected_weapon.weapon_type,
+                attribute_force = selected_weapon.attribute_force,
+                gogma_counter = rng_state.gogma_counter,
+                counter_gate = rng_state.counter_gate,
+            }
+            total = total + distance
+        end
+    else
+        state.existing_gogma_resets = 0
+        state.existing_gogma_keeps = 0
+    end
+
+    state.existing_total = total
+    state.existing_route_status = "Existing weapon route calculated."
+end
+
 local function start_full_plan_calculation()
     if state.full_plan_running then
         return
@@ -1801,7 +2175,7 @@ local function collect_equip_params_in_object(object, depth, visited, budget, re
     end
 end
 
-local function try_object_field(object, field_name)
+function try_object_field(object, field_name)
     if object == nil then
         return nil
     end
@@ -1811,7 +2185,7 @@ local function try_object_field(object, field_name)
     return ok and value or nil
 end
 
-local function collection_item(collection, index)
+function collection_item(collection, index)
     if collection == nil or index == nil or index < 0 then
         return nil
     end
@@ -2016,7 +2390,7 @@ local function find_equip_param_in_collection(collection)
     return nil
 end
 
-local function resolve_artian_create_param(weapon_type, rarity)
+function resolve_artian_create_param(weapon_type, rarity)
     -- Save reloads replace the active save graph without reloading this Lua
     -- script. Reacquire the parameter object before consulting the cached hook
     -- value, otherwise plans can silently use a counter from the previous save.
@@ -2340,15 +2714,50 @@ end
 
 local function draw_quick_start()
     draw_colored_text("Quick start", 0xff73d7ff)
-    imgui.text("1. Choose the final weapon, its three materials, skills, and bonuses below.")
-    imgui.text("2. Press Calculate full plan. You do not need to forge anything first.")
+    imgui.text("1. Choose a plan type, then set the weapon, skills, and bonuses below.")
+    imgui.text("2. Press the calculate button for that plan.")
     imgui.text("3. The calculated result stays fixed while you browse.")
 end
 
+local function draw_plan_mode_selector()
+    draw_colored_text("Plan type", 0xff73d7ff)
+    local modes = { "New weapon", "Existing weapon" }
+    local changed
+    changed, state.plan_mode = imgui.combo("Plan type", state.plan_mode, modes)
+end
+
+local function draw_target_inputs(id_suffix)
+    id_suffix = id_suffix or ""
+    local changed
+    draw_colored_text("Desired reinforcements", 0xff73d7ff)
+    draw_checkbox("Include reinforcements in plan##reinforcements" .. id_suffix,
+        "include_reinforcement_predictions")
+    for slot = 1, 5 do
+        local key = "desired_reinforcement_" .. tostring(slot)
+        changed, state[key] = imgui.combo(
+            "Bonus " .. tostring(slot) .. "##" .. key .. id_suffix,
+            state[key], reinforcement_names)
+    end
+    local mode, target_error = sync_reinforcement_target()
+    if target_error ~= nil then
+        draw_colored_text(target_error, 0xff8080ff)
+    end
+    draw_colored_text("Gogma set and group skills", 0xff73d7ff)
+    draw_checkbox("Include set/group skills in plan##skills" .. id_suffix,
+        "include_skill_predictions")
+    changed, state.desired_set_skill = imgui.combo(
+        "Set skill##set_skill" .. id_suffix, state.desired_set_skill,
+        set_skill_names
+    )
+    changed, state.desired_group_skill = imgui.combo(
+        "Group skill##group_skill" .. id_suffix, state.desired_group_skill,
+        group_skill_names
+    )
+    return mode, target_error
+end
+
 local function draw_from_scratch_plan()
-    draw_colored_text("Full weapon plan", 0xff73d7ff)
-    draw_colored_text("Experimental: validate the first complete route before spending rare parts.",
-        0xff80c0ff)
+    draw_colored_text("New weapon", 0xff73d7ff)
     local changed
     imgui.text("Final weapon")
     changed, state.target_weapon_type = imgui.combo(
@@ -2371,31 +2780,11 @@ local function draw_from_scratch_plan()
     if has_element_infusion then
         imgui.text("Production bonus: Element Infusion")
     end
-    draw_colored_text("Desired reinforcements", 0xff73d7ff)
-    draw_checkbox("Include reinforcements in plan##full_reinforcements",
-        "include_reinforcement_predictions")
-    for slot = 1, 5 do
-        local key = "desired_reinforcement_" .. tostring(slot)
-        changed, state[key] = imgui.combo(
-            "Bonus " .. tostring(slot), state[key], reinforcement_names)
-    end
-    local mode, target_error = sync_reinforcement_target()
-    if target_error ~= nil then
-        draw_colored_text(target_error, 0xff8080ff)
-    end
-    draw_colored_text("Gogma set and group skills", 0xff73d7ff)
-    draw_checkbox("Include set/group skills in plan##full_skills",
-        "include_skill_predictions")
-    changed, state.desired_set_skill = imgui.combo(
-        "Set skill", state.desired_set_skill, set_skill_names
-    )
-    changed, state.desired_group_skill = imgui.combo(
-        "Group skill", state.desired_group_skill, group_skill_names
-    )
+    draw_target_inputs("full")
     imgui.separator()
     draw_colored_text("Ready to calculate", 0xff73d7ff)
     local calculate_label = state.full_plan_running
-        and ">>> Calculating... <<<" or ">>> Calculate full plan <<<"
+        and "Calculating..." or "Calculate plan"
     if imgui.button(calculate_label) then
         start_full_plan_calculation()
     end
@@ -2492,6 +2881,102 @@ local function draw_from_scratch_plan()
     end
 end
 
+local function draw_existing_weapon_plan()
+    draw_colored_text("Existing weapon", 0xff73d7ff)
+    imgui.text("Choose an upgraded weapon from the loaded character's equipment box.")
+
+    if imgui.button("Refresh existing weapons") then
+        local weapons, err = read_existing_gogma_weapons()
+        state.existing_weapons = weapons
+        state.existing_weapon_index = clamp_index(state.existing_weapon_index, weapons)
+        state.existing_weapon_status = err or ("Found " .. tostring(#weapons)
+            .. " existing Gogma/Artian weapon(s).")
+    end
+    if state.existing_weapons == nil then
+        local weapons, err = read_existing_gogma_weapons()
+        state.existing_weapons = weapons
+        state.existing_weapon_index = clamp_index(state.existing_weapon_index, weapons)
+        state.existing_weapon_status = err or ("Found " .. tostring(#weapons)
+            .. " existing Gogma/Artian weapon(s).")
+    end
+    if state.existing_weapon_status ~= nil then
+        imgui.text(state.existing_weapon_status)
+    end
+
+    local weapon_labels = {}
+    for _, weapon in ipairs(state.existing_weapons or {}) do
+        table.insert(weapon_labels, weapon.label)
+    end
+    if #weapon_labels == 0 then
+        imgui.text("No upgraded Artian weapons were detected.")
+        return
+    end
+    local changed
+    changed, state.existing_weapon_index = imgui.combo(
+        "Existing weapon", state.existing_weapon_index, weapon_labels
+    )
+    local selected_weapon = state.existing_weapons[state.existing_weapon_index]
+    if selected_weapon ~= nil then
+        local set_name, group_name = names_for_artian_skill_type(selected_weapon.skill_type)
+        imgui.text("Current skills: " .. tostring(set_name)
+            .. " / " .. tostring(group_name))
+        imgui.text("Current reinforcements: "
+            .. format_existing_reinforcements(selected_weapon.gogma_value))
+    end
+
+    draw_target_inputs("existing")
+    imgui.separator()
+    draw_colored_text("Ready to calculate", 0xff73d7ff)
+    if imgui.button("Calculate plan") then
+        local ok, err = pcall(calculate_existing_weapon_route)
+        if not ok then
+            state.existing_route_status = "Calculation failed: " .. tostring(err)
+        end
+    end
+    if state.existing_route_status ~= nil then
+        local is_error = state.existing_route_status:find("failed", 1, true) ~= nil
+            or state.existing_route_status:find("not found", 1, true) ~= nil
+            or state.existing_route_status:find("require", 1, true) ~= nil
+            or state.existing_route_status:find("needs", 1, true) ~= nil
+        if is_error then
+            draw_colored_text(state.existing_route_status, 0xff8080ff)
+        else
+            imgui.text(state.existing_route_status)
+        end
+    end
+    if state.existing_total == nil then
+        return
+    end
+
+    if state.include_skill_predictions then
+        if (state.existing_skill_resets or 0) > 0 then
+            imgui.text("Reset Skills " .. tostring(state.existing_skill_resets)
+                .. " time(s).")
+        else
+            imgui.text("Current skills already match the target.")
+        end
+    end
+    if state.include_reinforcement_predictions then
+        if (state.existing_gogma_resets or 0) > 0 then
+            imgui.text("Amend (Reset Bonuses) "
+                .. tostring(state.existing_gogma_resets) .. " time(s).")
+        end
+        if (state.existing_gogma_keeps or 0) > 0 then
+            imgui.text("Amend (Keep Bonuses) "
+                .. tostring(state.existing_gogma_keeps) .. " time(s).")
+        end
+        if (state.existing_gogma_resets or 0) == 0
+            and (state.existing_gogma_keeps or 0) == 0 then
+            imgui.text("Current reinforcements already match the target.")
+        end
+        if state.existing_gogma_value ~= nil then
+            imgui.text("Gogma result: "
+                .. format_gogma_reinforcements(state.existing_gogma_value))
+        end
+    end
+    imgui.text("Planned RNG actions: " .. tostring(state.existing_total))
+end
+
 local function csv_cell(value)
     local text = tostring(value or "")
     return '"' .. text:gsub('"', '""') .. '"'
@@ -2549,9 +3034,9 @@ local function append_base_prediction_rows(rows, overall_step)
     return overall_step
 end
 
-local function append_skill_prediction_rows(rows, overall_step)
-    local distance = state.full_plan_skill_resets
-    local capture = state.full_plan_skill_capture
+local function append_skill_prediction_rows(rows, overall_step, distance, capture)
+    distance = distance or state.full_plan_skill_resets
+    capture = capture or state.full_plan_skill_capture
     if distance == nil or distance <= 0 or capture == nil
         or capture.weapon_type == nil or capture.attribute_force == nil
         or capture.base_seed == nil or capture.counter == nil then
@@ -2569,8 +3054,10 @@ local function append_skill_prediction_rows(rows, overall_step)
     local target = set_skill_names[state.desired_set_skill] .. " / "
         .. group_skill_names[state.desired_group_skill]
     for step = 1, distance do
-        for _ = 1, 10 do
-            x, y, z, w = rng_step(x, y, z, w)
+        if not (capture.counter_is_next and step == 1) then
+            for _ = 1, 10 do
+                x, y, z, w = rng_step(x, y, z, w)
+            end
         end
         local set_name, group_name = names_for_artian_skill_type(
             skill_type_from_table_index(w % 294)
@@ -2585,21 +3072,24 @@ local function append_skill_prediction_rows(rows, overall_step)
     return overall_step
 end
 
-local function append_gogma_prediction_rows(rows, overall_step)
-    local distance = (state.full_plan_gogma_resets or 0)
-        + (state.full_plan_gogma_keeps or 0)
-    if distance <= 0 or state.full_plan_base_value == nil
-        or state.full_plan_gogma_capture == nil then
+local function append_gogma_prediction_rows(rows, overall_step, start_value,
+        capture, resets, keeps)
+    resets = resets or state.full_plan_gogma_resets or 0
+    keeps = keeps or state.full_plan_gogma_keeps or 0
+    local distance = resets + keeps
+    start_value = start_value or state.full_plan_base_value
+    capture = capture or state.full_plan_gogma_capture
+    if distance <= 0 or start_value == nil or capture == nil then
         return overall_step
     end
-    local rng = initialize_gogma_rng(state.full_plan_gogma_capture)
+    local rng = initialize_gogma_rng(capture)
     if rng == nil then
         return overall_step
     end
-    local packed = state.full_plan_base_value
+    local packed = start_value
     local target = selected_gogma_target_text()
     for step = 1, distance do
-        local mode = step <= (state.full_plan_gogma_resets or 0) and 0 or 1
+        local mode = step <= resets and 0 or 1
         local result = simulate_gogma_roll(copy_rng(rng), packed, mode)
         if result == nil then
             return overall_step
@@ -2650,7 +3140,7 @@ local function export_prediction_rows()
     if costs ~= nil then
         overall_step = overall_step + 1
         table.insert(rows, {
-            overall_step, "", "Full weapon plan", "Estimated totals",
+            overall_step, "", "New weapon", "Estimated totals",
             state.full_plan_skills_pending and "Skill reset cost pending"
                 or "Complete known costs",
             "", costs.base_points, costs.total_zenny,
@@ -2677,11 +3167,89 @@ local function export_prediction_rows()
         .. " steps: GogRollPlannerPredictions.csv"
 end
 
+local function export_existing_prediction_rows()
+    local _, target_error = sync_reinforcement_target()
+    if target_error ~= nil then
+        state.export_status = "Export failed: " .. target_error
+        return
+    end
+    if state.existing_total == nil then
+        state.export_status = "Export failed: calculate an existing weapon first."
+        return
+    end
+    local selected_weapon = state.existing_weapons ~= nil
+        and state.existing_weapons[state.existing_weapon_index] or nil
+    if selected_weapon == nil then
+        state.export_status = "Export failed: choose an existing weapon first."
+        return
+    end
+
+    local set_name, group_name = names_for_artian_skill_type(selected_weapon.skill_type)
+    local rows = {
+        { "Row", "Stage step", "Stage", "Action", "Predicted result", "Target",
+            "Base reinforcement points", "Zenny", "Gogma material points",
+            "Rarity-8 Artian parts", "Tarred Devices" },
+        { 1, "", "Existing weapon", "Starting state",
+            tostring(weapon_type_names[selected_weapon.weapon_type + 1] or "Weapon")
+                .. " / " .. attribute_name_for_force(selected_weapon.attribute_force)
+                .. " / " .. tostring(set_name) .. " / " .. tostring(group_name)
+                .. " / " .. format_existing_reinforcements(selected_weapon.gogma_value),
+            "", 0, 0, 0, 0, 0 },
+    }
+    local overall_step = 1
+    if state.include_skill_predictions then
+        overall_step = append_skill_prediction_rows(rows, overall_step,
+            state.existing_skill_resets, state.existing_skill_capture)
+    end
+    if state.include_reinforcement_predictions then
+        overall_step = append_gogma_prediction_rows(rows, overall_step,
+            state.existing_start_gogma_value, state.existing_gogma_capture,
+            state.existing_gogma_resets, state.existing_gogma_keeps)
+    end
+    overall_step = overall_step + 1
+    table.insert(rows, {
+        overall_step, "", "Existing weapon", "Estimated totals",
+        "Complete known costs", "", 0,
+        (state.existing_skill_resets or 0) * COSTS.skill_reset_zenny
+            + ((state.existing_gogma_resets or 0)
+                + (state.existing_gogma_keeps or 0)) * COSTS.gogma_amend_zenny,
+        (state.existing_skill_resets or 0) * COSTS.skill_reset_points
+            + ((state.existing_gogma_resets or 0)
+                + (state.existing_gogma_keeps or 0)) * COSTS.gogma_amend_points,
+        0, 0,
+    })
+
+    local path = resolve_data_path(EXPORT_PATH)
+    local file, err = io.open(path, "w")
+    if file == nil then
+        state.export_status = "Export failed: " .. tostring(err)
+        return
+    end
+    for _, row in ipairs(rows) do
+        local cells = {}
+        for column = 1, 11 do
+            table.insert(cells, csv_cell(row[column]))
+        end
+        file:write(table.concat(cells, ","), "\n")
+    end
+    file:close()
+    state.export_status = "Exported " .. tostring(#rows - 1)
+        .. " steps: GogRollPlannerPredictions.csv"
+end
+
+local function export_active_prediction_rows()
+    if state.plan_mode == 2 then
+        export_existing_prediction_rows()
+    else
+        export_prediction_rows()
+    end
+end
+
 local function draw_export()
     imgui.separator()
     imgui.text("Export")
-    if imgui.button("Export predictions to CSV") then
-        local ok, err = pcall(export_prediction_rows)
+    if imgui.button("Export active plan to CSV") then
+        local ok, err = pcall(export_active_prediction_rows)
         if not ok then
             state.export_status = "Export failed: " .. tostring(err)
         end
@@ -2689,11 +3257,13 @@ local function draw_export()
     if state.export_status ~= nil then
         draw_export_status(state.export_status)
     end
-    if imgui.button("Export web calculator values") then
-        write_web_calculator_values()
-    end
-    if state.web_values_status ~= nil then
-        draw_export_status(state.web_values_status)
+    if state.plan_mode == 1 then
+        if imgui.button("Export web calculator values") then
+            write_web_calculator_values()
+        end
+        if state.web_values_status ~= nil then
+            draw_export_status(state.web_values_status)
+        end
     end
     imgui.text("")
     imgui.text("")
@@ -2718,7 +3288,13 @@ re.on_draw_ui(function()
         imgui.separator()
         draw_quick_start()
         imgui.separator()
-        draw_from_scratch_plan()
+        draw_plan_mode_selector()
+        imgui.separator()
+        if state.plan_mode == 2 then
+            draw_existing_weapon_plan()
+        else
+            draw_from_scratch_plan()
+        end
         draw_export()
         if state.last_error ~= "" then
             imgui.separator()

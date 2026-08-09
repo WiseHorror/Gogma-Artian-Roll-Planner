@@ -146,7 +146,7 @@ function predictSkillRoute(capture, desiredKey) {
   r = rngStep(r);
   const initial = skillFromIndex(r.w % 294);
   for (let rerolls = 1; rerolls <= 5000; rerolls++) {
-    r = advance(r, 10);
+    if (!(capture.counterIsNext && rerolls === 1)) r = advance(r, 10);
     if (skillFromIndex(r.w % 294).key === desiredKey) return {initial, distance: rerolls};
   }
   return {initial, distance: null};
@@ -289,6 +289,9 @@ function namesForPackedBase(packed) {
 function namesForPackedGogma(packed) {
   return unpackGogma(packed).map((id) => gogmaNames[id] || `Bonus ${id + 1}`).join(" | ");
 }
+function packGogmaIds(ids) {
+  return ids.reduce((packed, id, index) => packed + (id + 1) * (1000 ** index), 0);
+}
 function nameForSkillIndex(index) {
   const skill = skillFromIndex(index);
   return `${skill.setName} / ${skill.groupName}`;
@@ -360,6 +363,38 @@ function calculate(values) {
   return {recipe, best, skillResets, initialSkill, includeGogma, includeBase};
 }
 
+function calculateExisting(values) {
+  const targetMode = reinforcementTargetMode(values.desiredReinforcements);
+  const desiredKey = skillType(setSkillNames[values.desiredSetSkill - 1], groupSkillNames[values.desiredGroupSkill - 1]);
+  const currentKey = skillType(setSkillNames[values.currentSetSkill - 1], groupSkillNames[values.currentGroupSkill - 1]);
+  const attribute = skillAttributeForce(values.existingAttribute);
+  let skillResets = 0;
+  let reinforcementRoute = null;
+  let total = 0;
+
+  if (values.includeSkills && currentKey !== desiredKey) {
+    const route = predictSkillRoute({...values, attribute, counterIsNext: true}, desiredKey);
+    if (route.distance == null) throw new Error("Skill target not found within 5000 resets.");
+    skillResets = route.distance;
+    total += skillResets;
+  }
+  if (values.includeReinforcements) {
+    if (targetMode !== "gogma") {
+      throw new Error("Existing weapon amendments require a Gogma-tier reinforcement target.");
+    }
+    const currentValue = packGogmaIds(values.currentReinforcements);
+    const target = selectedGogmaTarget(values.desiredReinforcements);
+    if (sameMultiset(unpackGogma(currentValue), target)) {
+      reinforcementRoute = {distance: 0, resets: 0, keeps: 0, value: currentValue};
+    } else {
+      reinforcementRoute = findGogmaRoute({...values, attribute}, currentValue, target, 5000);
+      if (!reinforcementRoute) throw new Error("Reinforcement target not found within 5000 amendments.");
+    }
+    total += reinforcementRoute.distance;
+  }
+  return {attribute, skillResets, reinforcementRoute, total, currentKey};
+}
+
 function csvCell(value) {
   return `"${String(value ?? "").replaceAll("\"", "\"\"")}"`;
 }
@@ -395,6 +430,14 @@ function fullPlanCosts(result) {
     totalZenny: forgeZenny + baseZenny + upgradeZenny + skillZenny + amendZenny,
     forgeParts: result.best.forgeCount * COSTS.rarity8PartsPerForge,
     upgradeDevices: reachesGogma ? COSTS.gogmaUpgradeDevices : 0,
+  };
+}
+function existingWeaponCosts(result) {
+  const amendments = result.reinforcementRoute ? result.reinforcementRoute.distance : 0;
+  return {
+    skillPoints: result.skillResets * COSTS.skillResetPoints,
+    amendPoints: amendments * COSTS.gogmaAmendPoints,
+    totalZenny: result.skillResets * COSTS.skillResetZenny + amendments * COSTS.gogmaAmendZenny,
   };
 }
 function formatNumber(value) {
@@ -456,27 +499,76 @@ function appendGogmaPredictionRows(rows, overallStep, values, result) {
   }
   return overallStep;
 }
+function appendExistingSkillPredictionRows(rows, overallStep, values, result) {
+  if (!values.includeSkills || result.skillResets <= 0) return overallStep;
+  let r = initializeRng(u32(values.weaponType * 1000 + result.attribute + values.baseSeed) ^ 0x00ac9365);
+  r = advance(r, values.counterGate < 0x36 ? 0 : values.skillCounter * 10);
+  r = rngStep(r);
+  const target = `${setSkillNames[values.desiredSetSkill - 1]} / ${groupSkillNames[values.desiredGroupSkill - 1]}`;
+  for (let step = 1; step <= result.skillResets; step++) {
+    if (step > 1) r = advance(r, 10);
+    rows.push([
+      ++overallStep, step, "Gogma set and group skills", "Reset skills",
+      nameForSkillIndex(r.w % 294), target, 0, COSTS.skillResetZenny,
+      COSTS.skillResetPoints, 0, 0,
+    ]);
+  }
+  return overallStep;
+}
+function appendExistingGogmaPredictionRows(rows, overallStep, values, result) {
+  const route = result.reinforcementRoute;
+  if (!values.includeReinforcements || !route || route.distance <= 0) return overallStep;
+  let r = initializeGogma({...values, attribute: result.attribute});
+  let packed = packGogmaIds(values.currentReinforcements);
+  const target = selectedTargetText(values.desiredReinforcements);
+  for (let step = 1; step <= route.distance; step++) {
+    const mode = step <= route.resets ? 0 : 1;
+    const next = simulateGogma({...r}, packed, mode);
+    if (!next) break;
+    packed = next.packed;
+    rows.push([
+      ++overallStep, step, "Gogma reinforcements",
+      mode === 0 ? "Amend (Reset Bonuses)" : "Amend (Keep Bonuses)",
+      namesForPackedGogma(packed), target, 0, COSTS.gogmaAmendZenny,
+      COSTS.gogmaAmendPoints, 0, 0,
+    ]);
+    r = advance(r, 10);
+  }
+  return overallStep;
+}
 function exportCsv() {
   const out = document.getElementById("result");
   if (!lastCalculation) {
     out.textContent = "Calculate a plan before exporting CSV.";
     return;
   }
-  const {values, result} = lastCalculation;
+  const {mode, values, result} = lastCalculation;
   const rows = [[
     "Row", "Stage step", "Stage", "Action", "Predicted result", "Target",
     "Base reinforcement points", "Zenny", "Gogma material points",
     "Rarity-8 Artian parts", "Tarred Devices",
   ]];
   let overallStep = 0;
-  overallStep = appendBasePredictionRows(rows, overallStep, values, result);
-  overallStep = appendSkillPredictionRows(rows, overallStep, values, result);
-  overallStep = appendGogmaPredictionRows(rows, overallStep, values, result);
-  const costs = fullPlanCosts(result);
+  let costs;
+  if (mode === "existing") {
+    rows.push([
+      ++overallStep, "", "Existing weapon", "Current state",
+      `${setSkillNames[values.currentSetSkill - 1]} / ${groupSkillNames[values.currentGroupSkill - 1]} | ${namesForPackedGogma(packGogmaIds(values.currentReinforcements))}`,
+      "", 0, 0, 0, 0, 0,
+    ]);
+    overallStep = appendExistingSkillPredictionRows(rows, overallStep, values, result);
+    overallStep = appendExistingGogmaPredictionRows(rows, overallStep, values, result);
+    costs = existingWeaponCosts(result);
+  } else {
+    overallStep = appendBasePredictionRows(rows, overallStep, values, result);
+    overallStep = appendSkillPredictionRows(rows, overallStep, values, result);
+    overallStep = appendGogmaPredictionRows(rows, overallStep, values, result);
+    costs = fullPlanCosts(result);
+  }
   rows.push([
-    ++overallStep, "", "Full weapon plan", "Estimated totals", "Complete known costs",
-    "", costs.basePoints, costs.totalZenny, costs.amendPoints,
-    costs.forgeParts, costs.upgradeDevices,
+    ++overallStep, "", mode === "existing" ? "Existing weapon plan" : "New weapon plan", "Estimated totals", "Complete known costs",
+    "", costs.basePoints || 0, costs.totalZenny, costs.amendPoints,
+    costs.forgeParts || 0, costs.upgradeDevices || 0,
   ]);
   downloadText(
     "GogmaArtianRollPlannerPredictions.csv",
@@ -539,8 +631,23 @@ function buildReinforcements() {
     wrap.append(label);
   }
 }
+function buildCurrentReinforcements() {
+  const wrap = document.getElementById("currentReinforcements");
+  const currentIds = [6, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+  for (let i = 0; i < 5; i++) {
+    const label = document.createElement("label");
+    label.className = "reinforcement";
+    label.innerHTML = `<span class="field-label"><span class="mini-icon" aria-hidden="true">B${i + 1}</span>Current bonus ${i + 1}</span>`;
+    const select = document.createElement("select");
+    select.id = `currentReinforcement${i}`;
+    currentIds.forEach((id) => option(select, gogmaNames[id], id));
+    label.append(select);
+    wrap.append(label);
+  }
+}
 function getValues() {
   return {
+    planMode: document.querySelector('input[name="planMode"]:checked').value,
     baseSeed: Number(document.getElementById("baseSeed").value),
     skillCounter: Number(document.getElementById("skillCounter").value),
     gogmaCounter: Number(document.getElementById("gogmaCounter").value),
@@ -555,6 +662,10 @@ function getValues() {
     desiredGroupSkill: Number(document.getElementById("desiredGroupSkill").value),
     includeSkills: document.getElementById("includeSkills").checked,
     includeReinforcements: document.getElementById("includeReinforcements").checked,
+    existingAttribute: Number(document.getElementById("existingAttribute").value),
+    currentSetSkill: Number(document.getElementById("currentSetSkill").value),
+    currentGroupSkill: Number(document.getElementById("currentGroupSkill").value),
+    currentReinforcements: [0, 1, 2, 3, 4].map((i) => Number(document.getElementById(`currentReinforcement${i}`).value)),
   };
 }
 function setValues(v) {
@@ -570,6 +681,15 @@ function setValues(v) {
   (v.desiredReinforcements || [10, 10, 8, 13, 11]).forEach((x, i) => document.getElementById(`reinforcement${i}`).value = x);
   if (v.desiredSetSkill != null) document.getElementById("desiredSetSkill").value = v.desiredSetSkill;
   if (v.desiredGroupSkill != null) document.getElementById("desiredGroupSkill").value = v.desiredGroupSkill;
+  if (v.existingAttribute != null) document.getElementById("existingAttribute").value = v.existingAttribute;
+  if (v.currentSetSkill != null) document.getElementById("currentSetSkill").value = v.currentSetSkill;
+  if (v.currentGroupSkill != null) document.getElementById("currentGroupSkill").value = v.currentGroupSkill;
+  (v.currentReinforcements || [15, 15, 12, 16, 10]).forEach((x, i) => document.getElementById(`currentReinforcement${i}`).value = x);
+  if (v.planMode) {
+    const radio = document.querySelector(`input[name="planMode"][value="${v.planMode}"]`);
+    if (radio) radio.checked = true;
+  }
+  updatePlanMode();
 }
 function setImportStatus(message, tone = "") {
   const status = document.getElementById("importStatus");
@@ -604,9 +724,30 @@ function renderResult() {
   const out = document.getElementById("result");
   try {
     const values = getValues();
-    const result = calculate(values);
-    lastCalculation = {values, result};
+    const result = values.planMode === "existing" ? calculateExisting(values) : calculate(values);
+    lastCalculation = {mode: values.planMode, values, result};
     const lines = [];
+    if (values.planMode === "existing") {
+      lines.push(`Current weapon: ${attributeNames[values.existingAttribute - 1]} ${weaponTypeNames[values.weaponType]}`);
+      lines.push(`Current skills: ${setSkillNames[values.currentSetSkill - 1]} / ${groupSkillNames[values.currentGroupSkill - 1]}`);
+      lines.push(`Current reinforcements: ${namesForPackedGogma(packGogmaIds(values.currentReinforcements))}`);
+      if (values.includeSkills) {
+        lines.push(result.skillResets > 0 ? `Reset Skills ${result.skillResets} time(s).` : "Current skills already match the target.");
+      }
+      if (values.includeReinforcements) {
+        const route = result.reinforcementRoute;
+        if (route.resets > 0) lines.push(`Amend (Reset Bonuses) ${route.resets} time(s).`);
+        if (route.keeps > 0) lines.push(`Amend (Keep Bonuses) ${route.keeps} time(s).`);
+        if (route.distance === 0) lines.push("Current reinforcements already match the target.");
+        lines.push(`Gogma result: ${namesForPackedGogma(route.value)}`);
+      }
+      lines.push(`Planned RNG actions: ${result.total}`);
+      const costs = existingWeaponCosts(result);
+      const materialPoints = costs.amendPoints;
+      lines.push(`Estimated cost: ${formatNumber(materialPoints / COSTS.oricalcitePoints)} Oricalcite (${formatNumber(materialPoints)} material points) + ${formatNumber(costs.totalZenny)}z`);
+      out.textContent = lines.join("\n");
+      return;
+    }
     lines.push(`Forged attribute: ${attributeNames[result.recipe.finalAttribute - 1]}${result.recipe.hasElementInfusion ? " + Element Infusion" : ""}`);
     lines.push(`Forge ${result.best.forgeCount} rarity-8 ${weaponTypeNames[getValues().weaponType]} weapon(s); keep weapon ${result.best.forgeCount}.`);
     lines.push(`Base result: ${namesForPackedBase(result.best.baseValue)}`);
@@ -629,23 +770,37 @@ function renderResult() {
     out.textContent = err.message;
   }
 }
+function updatePlanMode() {
+  const mode = document.querySelector('input[name="planMode"]:checked').value;
+  document.getElementById("newWeaponInputs").hidden = mode !== "new";
+  document.getElementById("existingWeaponInputs").hidden = mode !== "existing";
+  document.getElementById("forgeCounterField").hidden = mode !== "new";
+  document.getElementById("calculateButton").textContent = "Calculate plan";
+  lastCalculation = null;
+}
 function init() {
   fillSelect("weaponType", weaponTypeNames, 0);
   fillSelect("desiredSetSkill", setSkillNames, 1);
   fillSelect("desiredGroupSkill", groupSkillNames, 1);
+  fillSelect("existingAttribute", attributeNames, 1);
+  fillSelect("currentSetSkill", setSkillNames, 1);
+  fillSelect("currentGroupSkill", groupSkillNames, 1);
   buildMaterials();
   buildReinforcements();
+  buildCurrentReinforcements();
   setValues({
     baseSeed: 8524433, skillCounter: 186, gogmaCounter: 45, counterGate: 200,
     createCount: 33, weaponType: 10, materialAttributes: [4, 4, 4],
     materialInfusions: [1, 1, 1], desiredReinforcements: [10, 10, 8, 13, 11],
-    desiredSetSkill: 7, desiredGroupSkill: 10,
+    desiredSetSkill: 7, desiredGroupSkill: 10, existingAttribute: 2,
+    currentSetSkill: 7, currentGroupSkill: 10, currentReinforcements: [15, 15, 12, 16, 10],
   });
   updateWeaponIcon();
   document.getElementById("weaponType").addEventListener("change", () => {
     buildMaterials();
     updateWeaponIcon();
   });
+  document.querySelectorAll('input[name="planMode"]').forEach((input) => input.addEventListener("change", updatePlanMode));
   document.getElementById("calculateButton").addEventListener("click", renderResult);
   document.getElementById("exportCsvButton").addEventListener("click", exportCsv);
   document.getElementById("sampleButton").addEventListener("click", () => renderResult());

@@ -36,9 +36,15 @@
       <div class="panel-head">
         <div>
           <h2><span class="section-icon" aria-hidden="true">RN</span> Inputs</h2>
-          <p>Seed, counters, final recipe, and target rolls.</p>
+          <p>Choose a plan type, enter the RNG state, then set the target rolls.</p>
         </div>
-        <button id="calculateButton">Calculate</button>
+        <button id="calculateButton">Calculate plan</button>
+      </div>
+
+      <div class="plan-mode" role="group" aria-label="Plan type">
+        <span class="plan-mode-label">Plan type</span>
+        <label><input type="radio" name="planMode" value="new" checked> New weapon</label>
+        <label><input type="radio" name="planMode" value="existing"> Existing weapon</label>
       </div>
 
       <div class="subpanel">
@@ -48,27 +54,42 @@
           <label>Skill counter <input id="skillCounter" type="number" min="0"></label>
           <label>Gogma counter <input id="gogmaCounter" type="number" min="0"></label>
           <label>Counter gate <input id="counterGate" type="number" min="0"></label>
-          <label>Forge counter <input id="createCount" type="number" min="0"></label>
+          <label id="forgeCounterField">Forge counter <input id="createCount" type="number" min="0"></label>
           <label>Weapon type <span class="weapon-select"><img id="weaponIcon" class="weapon-icon" alt=""><select id="weaponType"></select></span></label>
         </div>
       </div>
 
-      <div class="subpanel">
+      <div id="newWeaponInputs" class="subpanel">
         <h3><span class="mini-icon" aria-hidden="true">MT</span> Final Materials</h3>
         <div id="materials" class="materials"></div>
         <p id="recipeSummary" class="summary"></p>
       </div>
 
+      <div id="existingWeaponInputs" class="subpanel" hidden>
+        <h3><span class="mini-icon" aria-hidden="true">EW</span> Existing Weapon</h3>
+        <p class="section-copy">Enter the Gogma Artian weapon's current attribute, skills, and reinforcements.</p>
+        <div class="grid compact">
+          <label>Attribute <select id="existingAttribute"></select></label>
+          <label>Current set skill <select id="currentSetSkill"></select></label>
+          <label>Current group skill <select id="currentGroupSkill"></select></label>
+        </div>
+        <div id="currentReinforcements" class="reinforcement-grid"></div>
+      </div>
+
       <div class="subpanel">
         <h3><span class="mini-icon" aria-hidden="true">TG</span> Targets</h3>
-        <div class="grid two">
-          <label>Set skill <select id="desiredSetSkill"></select></label>
-          <label>Group skill <select id="desiredGroupSkill"></select></label>
+        <div class="target-group">
+          <h4>Desired reinforcements</h4>
+          <label class="target-toggle"><input id="includeReinforcements" type="checkbox" checked> Include reinforcements in plan</label>
+          <div id="reinforcements" class="reinforcement-grid"></div>
         </div>
-        <div id="reinforcements" class="reinforcement-grid"></div>
-        <div class="checks">
-          <label><input id="includeSkills" type="checkbox" checked> Include set/group skills</label>
-          <label><input id="includeReinforcements" type="checkbox" checked> Include reinforcements</label>
+        <div class="target-group">
+          <h4>Gogma set and group skills</h4>
+          <label class="target-toggle"><input id="includeSkills" type="checkbox" checked> Include set/group skills in plan</label>
+          <div class="grid two">
+            <label>Set skill <select id="desiredSetSkill"></select></label>
+            <label>Group skill <select id="desiredGroupSkill"></select></label>
+          </div>
         </div>
       </div>
     </section>
@@ -79,7 +100,7 @@
           <h2><span class="section-icon" aria-hidden="true">OK</span> Result</h2>
           <p>Route summary and required actions.</p>
         </div>
-        <button id="exportCsvButton" type="button" class="secondary">Export CSV</button>
+        <button id="exportCsvButton" type="button" class="secondary">Export active plan to CSV</button>
       </div>
       <div id="result" class="result">Enter values and calculate.</div>
     </section>
