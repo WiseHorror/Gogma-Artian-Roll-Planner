@@ -215,6 +215,16 @@ p {
   margin: -4px 0 14px;
 }
 
+.calculate-action {
+  display: flex;
+  justify-content: flex-start;
+  padding: 14px 0 2px;
+}
+
+.calculate-action button {
+  min-width: 150px;
+}
+
 .target-group + .target-group {
   border-top: 1px solid #273146;
   margin-top: 16px;

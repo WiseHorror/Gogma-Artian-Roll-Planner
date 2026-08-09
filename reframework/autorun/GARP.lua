@@ -2,7 +2,7 @@
 -- Artian/Gogma skill and reinforcement route planner for Monster Hunter Wilds.
 
 local MOD_NAME = "Gogma Artian Roll Planner"
-local VERSION = "0.8.30"
+local VERSION = "0.9.0"
 local CONFIG_PATH = "GogmaArtianRollPlanner.json"
 local EXPORT_DIRECTORY = "Gogma Artian Roll Planner"
 local EXPORT_PATH = EXPORT_DIRECTORY .. "/GogmaArtianRollPlannerPredictions.csv"
@@ -69,6 +69,7 @@ local state = {
     existing_start_gogma_value = nil,
     existing_skill_capture = nil,
     existing_gogma_capture = nil,
+    existing_rng_state = nil,
     existing_total = nil,
     last_artian_skill_type = nil,
     predicted_skill_type = nil,
@@ -1880,6 +1881,7 @@ local function calculate_existing_weapon_route()
     state.existing_start_gogma_value = nil
     state.existing_skill_capture = nil
     state.existing_gogma_capture = nil
+    state.existing_rng_state = nil
     state.existing_total = nil
 
     local mode, target_error = sync_reinforcement_target()
@@ -1894,6 +1896,7 @@ local function calculate_existing_weapon_route()
             "Existing weapon route needs Artian RNG state. Open the smithy, then try again."
         return
     end
+    state.existing_rng_state = rng_state
 
     local weapons = state.existing_weapons
     local selected_weapon = weapons ~= nil and weapons[state.existing_weapon_index] or nil
@@ -2656,7 +2659,24 @@ local function draw_export_status(text)
     end
 end
 
-local function web_calculator_values_text()
+local function reinforcement_target_json()
+    return table.concat({
+        tostring(state.desired_reinforcement_1), tostring(state.desired_reinforcement_2),
+        tostring(state.desired_reinforcement_3), tostring(state.desired_reinforcement_4),
+        tostring(state.desired_reinforcement_5),
+    }, ", ")
+end
+
+local function attribute_index_for_force(attribute_force)
+    for index, _ in ipairs(attribute_names) do
+        if skill_attribute_force_for_recipe(index) == attribute_force then
+            return index
+        end
+    end
+    return 1
+end
+
+local function new_weapon_web_calculator_values_text()
     local final_attribute = derive_material_recipe()
     local skill_capture = state.full_plan_skill_capture or {}
     local gogma_capture = state.full_plan_gogma_capture or {}
@@ -2683,22 +2703,84 @@ local function web_calculator_values_text()
             tostring(state.material_infusion_1), tostring(state.material_infusion_2),
             tostring(state.material_infusion_3),
         }, ", ") .. "],",
-        '  "desiredReinforcements": [' .. table.concat({
-            tostring(state.desired_reinforcement_1), tostring(state.desired_reinforcement_2),
-            tostring(state.desired_reinforcement_3), tostring(state.desired_reinforcement_4),
-            tostring(state.desired_reinforcement_5),
-        }, ", ") .. "],",
+        '  "planMode": "new",',
+        '  "desiredReinforcements": [' .. reinforcement_target_json() .. "],",
         '  "desiredSetSkill": ' .. tostring(state.desired_set_skill) .. ",",
-        '  "desiredGroupSkill": ' .. tostring(state.desired_group_skill),
+        '  "desiredGroupSkill": ' .. tostring(state.desired_group_skill) .. ",",
+        '  "includeSkills": ' .. tostring(state.include_skill_predictions) .. ",",
+        '  "includeReinforcements": ' .. tostring(state.include_reinforcement_predictions),
+        "}",
+    }
+    return table.concat(lines, "\n")
+end
+
+local function existing_weapon_web_calculator_values_text(selected_weapon)
+    local rng_state = state.existing_rng_state
+    if rng_state == nil then
+        return nil, "Export failed: calculate an existing weapon plan first."
+    end
+    if packed_reinforcement_tier(selected_weapon.gogma_value) ~= "gogma" then
+        return nil, "Export failed: the selected weapon must be Gogma Artian."
+    end
+    local set_name, group_name = names_for_artian_skill_type(selected_weapon.skill_type)
+    local set_index = index_of(set_skill_names, set_name)
+    local group_index = index_of(group_skill_names, group_name)
+    if set_index == nil or group_index == nil then
+        return nil, "Export failed: the selected weapon's skills could not be mapped."
+    end
+    local current_reinforcements = {}
+    for _, id in ipairs(unpack_gogma_bonus_ids(selected_weapon.gogma_value)) do
+        table.insert(current_reinforcements, tostring(id))
+    end
+    local attribute_index = attribute_index_for_force(selected_weapon.attribute_force)
+    local lines = {
+        "{",
+        '  "planMode": "existing",',
+        '  "baseSeed": ' .. tostring(rng_state.base_seed or 0) .. ",",
+        '  "skillCounter": ' .. tostring(rng_state.counter or 0) .. ",",
+        '  "gogmaCounter": ' .. tostring(rng_state.gogma_counter or 0) .. ",",
+        '  "counterGate": ' .. tostring(rng_state.counter_gate or 0) .. ",",
+        '  "weaponType": ' .. tostring(selected_weapon.weapon_type) .. ",",
+        '  "existingAttribute": ' .. tostring(attribute_index) .. ",",
+        '  "attributeForce": ' .. tostring(selected_weapon.attribute_force) .. ",",
+        '  "currentSetSkill": ' .. tostring(set_index) .. ",",
+        '  "currentGroupSkill": ' .. tostring(group_index) .. ",",
+        '  "currentReinforcements": [' .. table.concat(current_reinforcements, ", ") .. "],",
+        '  "desiredReinforcements": [' .. reinforcement_target_json() .. "],",
+        '  "desiredSetSkill": ' .. tostring(state.desired_set_skill) .. ",",
+        '  "desiredGroupSkill": ' .. tostring(state.desired_group_skill) .. ",",
+        '  "includeSkills": ' .. tostring(state.include_skill_predictions) .. ",",
+        '  "includeReinforcements": ' .. tostring(state.include_reinforcement_predictions),
         "}",
     }
     return table.concat(lines, "\n")
 end
 
 local function write_web_calculator_values()
-    if state.full_plan_forges == nil then
-        state.web_values_status = "Export failed: calculate a full plan first."
-        return
+    local text
+    if state.plan_mode == 2 then
+        if state.existing_total == nil then
+            state.web_values_status = "Export failed: calculate an existing weapon plan first."
+            return
+        end
+        local selected_weapon = state.existing_weapons
+            and state.existing_weapons[state.existing_weapon_index] or nil
+        if selected_weapon == nil then
+            state.web_values_status = "Export failed: choose an existing weapon first."
+            return
+        end
+        local err
+        text, err = existing_weapon_web_calculator_values_text(selected_weapon)
+        if text == nil then
+            state.web_values_status = err
+            return
+        end
+    else
+        if state.full_plan_forges == nil then
+            state.web_values_status = "Export failed: calculate a New weapon plan first."
+            return
+        end
+        text = new_weapon_web_calculator_values_text()
     end
 
     local path = resolve_data_path(WEB_VALUES_PATH)
@@ -2707,7 +2789,7 @@ local function write_web_calculator_values()
         state.web_values_status = "Web values export failed: " .. tostring(err)
         return
     end
-    file:write(web_calculator_values_text(), "\n")
+    file:write(text, "\n")
     file:close()
     state.web_values_status = "Web values exported: GogmaWebCalculatorValues.json"
 end
@@ -3257,13 +3339,11 @@ local function draw_export()
     if state.export_status ~= nil then
         draw_export_status(state.export_status)
     end
-    if state.plan_mode == 1 then
-        if imgui.button("Export web calculator values") then
-            write_web_calculator_values()
-        end
-        if state.web_values_status ~= nil then
-            draw_export_status(state.web_values_status)
-        end
+    if imgui.button("Export web calculator values") then
+        write_web_calculator_values()
+    end
+    if state.web_values_status ~= nil then
+        draw_export_status(state.web_values_status)
     end
     imgui.text("")
     imgui.text("")

@@ -681,6 +681,8 @@ function setValues(v) {
   (v.desiredReinforcements || [10, 10, 8, 13, 11]).forEach((x, i) => document.getElementById(`reinforcement${i}`).value = x);
   if (v.desiredSetSkill != null) document.getElementById("desiredSetSkill").value = v.desiredSetSkill;
   if (v.desiredGroupSkill != null) document.getElementById("desiredGroupSkill").value = v.desiredGroupSkill;
+  if (v.includeSkills != null) document.getElementById("includeSkills").checked = Boolean(v.includeSkills);
+  if (v.includeReinforcements != null) document.getElementById("includeReinforcements").checked = Boolean(v.includeReinforcements);
   if (v.existingAttribute != null) document.getElementById("existingAttribute").value = v.existingAttribute;
   if (v.currentSetSkill != null) document.getElementById("currentSetSkill").value = v.currentSetSkill;
   if (v.currentGroupSkill != null) document.getElementById("currentGroupSkill").value = v.currentGroupSkill;

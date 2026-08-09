@@ -3,7 +3,8 @@
 Gogma Artian Roll Planner is a REFramework Lua mod and standalone web
 calculator for Monster Hunter Wilds. It reads the game's predetermined Artian
 weapon streams and calculates how many forges, skill resets, or Gogma
-amendments are needed to reach a selected result.
+amendments are needed to reach a selected result, either for a new weapon or
+one you already own.
 
 The mod does not change RNG, create equipment, or edit your save. It observes
 the same state the game uses and calculates a route from it.
@@ -39,10 +40,12 @@ stream do not advance the others.
 - Handles Gogma set/group skill resets.
 - Searches mixed **Amend (Reset Bonuses)** and **Amend (Keep Bonuses)** routes
   for Gogma reinforcement targets.
+- Detects upgraded Artian weapons in the loaded character's equipment box and
+  calculates rerolls from their current skills and reinforcements.
 - Estimates Artian parts, reinforcement points, Gogma material points, Tarred
   Devices, and zenny for the calculated route.
-- Exports route predictions to CSV.
-- Exports web calculator values for use outside the game.
+- Exports the active plan's predictions to CSV.
+- Exports New weapon values for use in the standalone web calculator.
 
 ## Installation
 
@@ -60,18 +63,25 @@ The mod appears under **Script Generated UI > Gogma Artian Roll Planner**.
 
 ## Usage
 
-Use **Full weapon plan** to choose the final weapon recipe, desired
-reinforcements, and desired Gogma set/group skills. Press **Calculate full
-plan** after changing the target.
-
-Targets made only from base-tier bonuses may finish as base Artian weapons.
-Selecting Gogma-tier bonuses makes the route continue through the Gogma upgrade
-and amendment steps. Base-tier and Gogma-tier reinforcement bonuses cannot be
+Choose a plan type, then set the shared desired reinforcements and Gogma
+set/group skills. Base-tier and Gogma-tier reinforcement bonuses cannot be
 mixed in the same target.
 
-The calculated route is a fixed snapshot of the save counters at calculation
-time. Press **Calculate full plan** again after changing targets or after
-intentionally advancing/reloading the save.
+**New weapon** calculates a complete route for a chosen rarity-8 recipe. It
+can include the forged weapon's base reinforcements, the skills assigned when
+it becomes Gogma Artian, and Gogma amendments. A target made only from
+base-tier reinforcements can end at base Artian; Gogma-tier reinforcements
+continue through the Gogma upgrade and amendments.
+
+**Existing weapon** reads upgraded Artian weapons from the currently loaded
+character's equipment box. Select one to calculate only the future **Reset
+Skills**, **Amend (Reset Bonuses)**, and **Amend (Keep Bonuses)** needed for
+the shared target. Reinforcement planning for an existing weapon requires a
+Gogma-tier target and a weapon already upgraded to Gogma Artian.
+
+Each calculated route is a fixed snapshot of the save counters at calculation
+time. Calculate again after changing targets or intentionally
+advancing/reloading the save.
 
 ## Web Calculator
 
@@ -82,10 +92,15 @@ in a browser or hosted with GitHub Pages:
 index.html
 ```
 
-In the mod, press **Calculate full plan**, then use **Export web calculator
-values** in the **Export** section. Import the generated JSON file on the web
-page by selecting it, dragging it onto the import box, pasting the file, or
-pasting its JSON text.
+The web calculator has the same **New weapon** and **Existing weapon** plan
+types. After calculating either plan, use **Export web calculator values** to
+write its values to JSON. Import the generated file on the web page by
+selecting it, dragging it onto the import box, pasting the file, or pasting
+its JSON text.
+
+An Existing weapon export includes the selected Gogma Artian weapon's current
+attribute, set/group skills, reinforcements, and the live RNG counters. The
+web page cannot read a local game save or equipment box by itself.
 
 The mod writes:
 
@@ -95,14 +110,15 @@ The mod writes:
 
 ## Export
 
-Use **Export predictions to CSV** to write the calculated route as a CSV table:
+Use **Export active plan to CSV** to write the currently calculated New weapon
+or Existing weapon route as a CSV table:
 
 ```text
 <Monster Hunter Wilds>/reframework/data/Gogma Artian Roll Planner/GogmaArtianRollPlannerPredictions.csv
 ```
 
-The CSV can be opened in spreadsheet tools such as Google Sheets, Excel, or
-LibreOffice Calc.
+The web calculator's matching export downloads the CSV in the browser. Either
+file can be opened in spreadsheet tools.
 
 ## Notes
 
