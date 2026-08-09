@@ -215,6 +215,10 @@ p {
   margin: -4px 0 14px;
 }
 
+#existingWeaponCatalogField:not([hidden]) + .section-copy {
+  margin-top: 10px;
+}
+
 .calculate-action {
   display: flex;
   justify-content: flex-start;

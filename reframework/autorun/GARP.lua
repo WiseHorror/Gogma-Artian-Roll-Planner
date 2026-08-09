@@ -844,7 +844,7 @@ local function refresh_existing_weapon_list()
         end
     end
     state.existing_weapon_status = err or ("Found " .. tostring(#weapons)
-        .. " existing Gogma/Artian weapon(s).")
+        .. " existing Gogma weapon(s).")
     return err == nil
 end
 
@@ -3112,7 +3112,8 @@ end
 
 local function draw_existing_weapon_plan()
     draw_colored_text("Existing weapon", 0xff73d7ff)
-    imgui.text("Choose an upgraded weapon from the loaded character's equipment box.")
+    imgui.text("Choose a Gogma weapon from the loaded character's equipment box.")
+    imgui.text("Only Gogma weapons are displayed; base Artian weapons are not included.")
     imgui.text("After an amendment, confirm or cancel the smithy preview before calculating again.")
 
     if imgui.button("Refresh existing weapons") then
@@ -3130,7 +3131,7 @@ local function draw_existing_weapon_plan()
         table.insert(weapon_labels, weapon.label)
     end
     if #weapon_labels == 0 then
-        imgui.text("No upgraded Artian weapons were detected.")
+        imgui.text("No Gogma weapons were detected.")
         return
     end
     local changed
