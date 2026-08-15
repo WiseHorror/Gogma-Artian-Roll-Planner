@@ -78,6 +78,8 @@ character's equipment box. Select one to calculate only the future **Reset
 Skills**, **Amend (Reset Bonuses)**, and **Amend (Keep Bonuses)** needed for
 the shared target. Reinforcement planning for an existing weapon requires a
 Gogma-tier target and a weapon already upgraded to Gogma Artian.
+Gogma weapons that still have their inherited base bonuses are supported; their
+first reinforcement amendment is necessarily **Reset Bonuses**.
 
 After an amendment, confirm or cancel the smithy preview before calculating
 again. Existing weapon calculation refreshes the equipment list automatically,

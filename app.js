@@ -8,6 +8,7 @@ const COSTS = {
   oricalcitePoints: 300,
   gogmaUpgradeDevices: 3,
   gogmaUpgradeZenny: 30000,
+  skillResetDevices: 3,
   skillResetPoints: 1500,
   skillResetZenny: 9000,
   gogmaAmendPoints: 6000,
@@ -173,10 +174,11 @@ function deriveMaterialRecipe(attrs) {
   return {finalAttribute, hasElementInfusion: matching === 3};
 }
 function skillAttributeForce(attribute) {
+  if (attribute === 6) return 5;
   return attribute >= 7 ? attribute - 1 : attribute;
 }
 function configuredBasePool(finalAttribute) {
-  const order = finalAttribute === 1 ? [6, 7, 8] : finalAttribute <= 6 ? [6, 4, 7, 8] : [4, 6, 7, 8];
+  const order = finalAttribute === 1 ? [6, 7, 8] : [6, 4, 7, 8];
   const limits = {4: 5, 6: 5, 7: 2, 8: 5};
   return order.map((id) => ({id, count: 0, max: limits[id]}));
 }
@@ -258,9 +260,9 @@ function initializeGogma(capture) {
   let r = initializeRng(u32(capture.baseSeed + capture.weaponType * 1000 + capture.attribute) ^ 0x00ac9365);
   return advance(r, capture.counterGate < 0x23 ? 0 : capture.gogmaCounter * 10);
 }
-function findGogmaRoute(capture, currentValue, target, limit) {
+function findGogmaRoute(capture, currentValue, target, limit, forceInitialReset = false) {
   let r = initializeGogma(capture);
-  let states = [{packed: currentValue, lastReset: null}];
+  let states = forceInitialReset ? [] : [{packed: currentValue, lastReset: null}];
   for (let distance = 1; distance <= limit; distance++) {
     const next = [];
     const seen = new Set();
@@ -412,19 +414,21 @@ function calculateExisting(values) {
     if (targetMode !== "gogma") {
       throw new Error("Existing weapon amendments require a Gogma-tier reinforcement target.");
     }
-    if (values.currentReinforcementTier !== "gogma") {
-      throw new Error("The selected weapon is still base Artian; upgrade it to Gogma before amendment planning.");
-    }
-    const currentValue = packGogmaIds(values.currentReinforcements);
+    const hasGogmaBonuses = values.currentReinforcementTier === "gogma";
+    const currentValue = hasGogmaBonuses
+      ? packGogmaIds(values.currentReinforcements)
+      : values.currentReinforcements.reduce((packed, id, index) => packed + id * (1000 ** index), 0);
     const target = selectedGogmaTarget(values.desiredReinforcements);
-    if (sameMultiset(unpackGogma(currentValue), target)) {
+    if (hasGogmaBonuses && sameMultiset(unpackGogma(currentValue), target)) {
       reinforcementRoute = {distance: 0, resets: 0, keeps: 0, value: currentValue};
     } else {
-      const currentIds = unpackGogma(currentValue);
-      reinforcementRoute = sameGogmaFamilies(currentIds, target)
+      const currentIds = hasGogmaBonuses ? unpackGogma(currentValue) : [];
+      reinforcementRoute = hasGogmaBonuses && sameGogmaFamilies(currentIds, target)
         ? findKeepGogmaRoute({...values, attribute}, currentValue, target, 5000)
         : null;
-      if (!reinforcementRoute) reinforcementRoute = findGogmaRoute({...values, attribute}, currentValue, target, 5000);
+      if (!reinforcementRoute) reinforcementRoute = findGogmaRoute(
+        {...values, attribute}, currentValue, target, 5000, !hasGogmaBonuses,
+      );
       if (!reinforcementRoute) throw new Error("Reinforcement target not found within 5000 amendments.");
     }
     total += reinforcementRoute.distance;
@@ -449,9 +453,12 @@ function downloadText(filename, text, mimeType) {
 function selectedTargetText(indices) {
   return indices.map((index) => reinforcementNames[index - 1] || `Bonus ${index}`).join(" | ");
 }
-function fullPlanCosts(result) {
+function skillResetDeviceCost(values) {
+  return COSTS.skillResetDevices;
+}
+function fullPlanCosts(result, values = getValues()) {
   const amendments = result.best.resets + result.best.keeps;
-  const reachesGogma = getValues().includeSkills || result.includeGogma;
+  const reachesGogma = values.includeSkills || result.includeGogma;
   const basePoints = COSTS.baseLevels * COSTS.basePointsPerLevel;
   const forgeZenny = result.best.forgeCount * COSTS.rarity8ForgeZenny;
   const baseZenny = COSTS.baseLevels * COSTS.baseZennyPerLevel;
@@ -466,15 +473,17 @@ function fullPlanCosts(result) {
     amendPoints,
     totalZenny: forgeZenny + baseZenny + upgradeZenny + skillZenny + amendZenny,
     forgeParts: result.best.forgeCount * COSTS.rarity8PartsPerForge,
-    upgradeDevices: reachesGogma ? COSTS.gogmaUpgradeDevices : 0,
+    upgradeDevices: (reachesGogma ? COSTS.gogmaUpgradeDevices : 0)
+      + result.skillResets * skillResetDeviceCost(values),
   };
 }
-function existingWeaponCosts(result) {
+function existingWeaponCosts(result, values = getValues()) {
   const amendments = result.reinforcementRoute ? result.reinforcementRoute.distance : 0;
   return {
     skillPoints: result.skillResets * COSTS.skillResetPoints,
     amendPoints: amendments * COSTS.gogmaAmendPoints,
     totalZenny: result.skillResets * COSTS.skillResetZenny + amendments * COSTS.gogmaAmendZenny,
+    upgradeDevices: result.skillResets * skillResetDeviceCost(values),
   };
 }
 function formatNumber(value) {
@@ -510,7 +519,7 @@ function appendSkillPredictionRows(rows, overallStep, values, result) {
     rows.push([
       ++overallStep, step, "Gogma set and group skills", "Reset skills",
       nameForSkillIndex(r.w % 294), target, 0, COSTS.skillResetZenny,
-      COSTS.skillResetPoints, 0, 0,
+      COSTS.skillResetPoints, 0, skillResetDeviceCost(values),
     ]);
   }
   return overallStep;
@@ -547,7 +556,7 @@ function appendExistingSkillPredictionRows(rows, overallStep, values, result) {
     rows.push([
       ++overallStep, step, "Gogma set and group skills", "Reset skills",
       nameForSkillIndex(r.w % 294), target, 0, COSTS.skillResetZenny,
-      COSTS.skillResetPoints, 0, 0,
+      COSTS.skillResetPoints, 0, skillResetDeviceCost(values),
     ]);
   }
   return overallStep;
@@ -556,7 +565,9 @@ function appendExistingGogmaPredictionRows(rows, overallStep, values, result) {
   const route = result.reinforcementRoute;
   if (!values.includeReinforcements || !route || route.distance <= 0) return overallStep;
   let r = initializeGogma({...values, attribute: result.attribute});
-  let packed = packGogmaIds(values.currentReinforcements);
+  let packed = values.currentReinforcementTier === "gogma"
+    ? packGogmaIds(values.currentReinforcements)
+    : values.currentReinforcements.reduce((total, id, index) => total + id * (1000 ** index), 0);
   const target = selectedTargetText(values.desiredReinforcements);
   for (let step = 1; step <= route.distance; step++) {
     const mode = step <= route.resets ? 0 : 1;
@@ -583,7 +594,7 @@ function exportCsv() {
   const rows = [[
     "Row", "Stage step", "Stage", "Action", "Predicted result", "Target",
     "Base reinforcement points", "Zenny", "Gogma material points",
-    "Rarity-8 Artian parts", "Tarred Devices",
+    "Rarity-8 Artian parts", "Tarred Devices (matching focus)",
   ]];
   let overallStep = 0;
   let costs;
@@ -595,12 +606,12 @@ function exportCsv() {
     ]);
     overallStep = appendExistingSkillPredictionRows(rows, overallStep, values, result);
     overallStep = appendExistingGogmaPredictionRows(rows, overallStep, values, result);
-    costs = existingWeaponCosts(result);
+    costs = existingWeaponCosts(result, values);
   } else {
     overallStep = appendBasePredictionRows(rows, overallStep, values, result);
     overallStep = appendSkillPredictionRows(rows, overallStep, values, result);
     overallStep = appendGogmaPredictionRows(rows, overallStep, values, result);
-    costs = fullPlanCosts(result);
+    costs = fullPlanCosts(result, values);
   }
   rows.push([
     ++overallStep, "", mode === "existing" ? "Existing weapon plan" : "New weapon plan", "Estimated totals", "Complete known costs",
@@ -821,9 +832,9 @@ function renderResult() {
         lines.push(`Gogma result: ${namesForPackedGogma(route.value)}`);
       }
       lines.push(`Planned RNG actions: ${result.total}`);
-      const costs = existingWeaponCosts(result);
+      const costs = existingWeaponCosts(result, values);
       const materialPoints = costs.amendPoints;
-      lines.push(`Estimated cost: ${formatNumber(materialPoints / COSTS.oricalcitePoints)} Oricalcite (${formatNumber(materialPoints)} material points) + ${formatNumber(costs.totalZenny)}z`);
+      lines.push(`Estimated cost: ${formatNumber(materialPoints / COSTS.oricalcitePoints)} Oricalcite (${formatNumber(materialPoints)} material points) + ${formatNumber(costs.upgradeDevices)} matching-focus Tarred Devices + ${formatNumber(costs.totalZenny)}z`);
       out.textContent = lines.join("\n");
       return;
     }
@@ -840,9 +851,9 @@ function renderResult() {
       lines.push(`Gogma result: ${namesForPackedGogma(result.best.gogmaValue)}`);
     }
     lines.push(`Planned RNG actions: ${result.best.total}`);
-    const costs = fullPlanCosts(result);
+    const costs = fullPlanCosts(result, values);
     const materialPoints = costs.basePoints + costs.amendPoints;
-    lines.push(`Estimated material cost: ${formatNumber(costs.forgeParts)} Artian parts + ${formatNumber(materialPoints / COSTS.oricalcitePoints)} Oricalcite (${formatNumber(materialPoints)} material points) + ${formatNumber(costs.upgradeDevices)} Tarred Devices + ${formatNumber(costs.totalZenny)}z`);
+    lines.push(`Estimated material cost: ${formatNumber(costs.forgeParts)} Artian parts + ${formatNumber(materialPoints / COSTS.oricalcitePoints)} Oricalcite (${formatNumber(materialPoints)} material points) + ${formatNumber(costs.upgradeDevices)} matching-focus Tarred Devices + ${formatNumber(costs.totalZenny)}z`);
     out.textContent = lines.join("\n");
   } catch (err) {
     lastCalculation = null;

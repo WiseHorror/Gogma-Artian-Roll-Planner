@@ -5,6 +5,7 @@ reframework/log.txt
 
 # Local reverse-engineering dumps and game packaging files
 *.disasm.txt
+*.zip
 modinfo.ini
 garp.jpg
 save/

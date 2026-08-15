@@ -2,7 +2,7 @@
 -- Artian/Gogma skill and reinforcement route planner for Monster Hunter Wilds.
 
 local MOD_NAME = "Gogma Artian Roll Planner"
-local VERSION = "0.9.1"
+local VERSION = "0.9.2"
 local CONFIG_PATH = "GogmaArtianRollPlanner.json"
 local EXPORT_DIRECTORY = "Gogma Artian Roll Planner"
 local EXPORT_PATH = EXPORT_DIRECTORY .. "/GogmaArtianRollPlannerPredictions.csv"
@@ -20,6 +20,7 @@ local COSTS = {
     oricalcite_points = 300,
     gogma_upgrade_devices = 3,
     gogma_upgrade_zenny = 30000,
+    skill_reset_devices = 3,
     skill_reset_points = 1500,
     skill_reset_zenny = 9000,
     gogma_amend_points = 6000,
@@ -153,6 +154,7 @@ local function full_plan_costs()
     local upgrade_zenny = reaches_gogma and COSTS.gogma_upgrade_zenny or 0
     local skill_points = skill_resets * COSTS.skill_reset_points
     local skill_zenny = skill_resets * COSTS.skill_reset_zenny
+    local skill_devices = skill_resets * COSTS.skill_reset_devices
     local amend_points = amendments * COSTS.gogma_amend_points
     local amend_zenny = amendments * COSTS.gogma_amend_zenny
     return {
@@ -161,7 +163,8 @@ local function full_plan_costs()
         base_points = base_points,
         skill_points = skill_points,
         amend_points = amend_points,
-        upgrade_devices = reaches_gogma and COSTS.gogma_upgrade_devices or 0,
+        upgrade_devices = (reaches_gogma and COSTS.gogma_upgrade_devices or 0)
+            + skill_devices,
         total_zenny = forge_zenny + base_zenny + upgrade_zenny
             + skill_zenny + amend_zenny,
     }
@@ -293,6 +296,7 @@ local capture_target_planning_inputs
 local pending_base_prediction = nil
 local active_base_pool_capture = nil
 local lottery_method = nil
+local rng_static_reference_address = nil
 local base_bonus_method = nil
 local attribute_force_method = nil
 local artian_skill_type_method = nil
@@ -463,8 +467,14 @@ local function names_for_artian_skill_type(skill_type)
 end
 
 local function read_address_value(address, value_type, method_name)
-    local value = sdk.to_valuetype(sdk.to_ptr(address), value_type)
-    return value[method_name](value, 0)
+    if address == nil or address <= 0 then
+        return nil
+    end
+    local ok, result = pcall(function()
+        local value = sdk.to_valuetype(sdk.to_ptr(address), value_type)
+        return value[method_name](value, 0)
+    end)
+    return ok and result or nil
 end
 
 local function read_qword(address)
@@ -473,6 +483,10 @@ end
 
 local function read_dword(address)
     return read_address_value(address, "System.UInt32", "read_dword")
+end
+
+local function read_byte(address)
+    return read_address_value(address, "System.Byte", "read_byte")
 end
 
 local function sync_reinforcement_target()
@@ -510,26 +524,96 @@ local function sync_reinforcement_target()
     end
     return use_gogma and "gogma" or "base", nil
 end
+local function rng_state_from_static_reference(reference_address)
+    local type_info = read_qword(reference_address)
+    if type_info == nil or type_info == 0 then
+        return nil
+    end
+    local static_holder = read_qword(type_info + 0x80)
+    if static_holder == nil or static_holder == 0 then
+        return nil
+    end
+    local static_array = read_qword(static_holder + 0x10)
+    local static_index = read_dword(type_info + 0xe0)
+    if static_array == nil or static_array == 0 or static_index == nil
+            or static_index > 0x100000 then
+        return nil
+    end
+    local static_data = read_qword(static_array + static_index * 8 + 0x20)
+    if static_data == nil or static_data == 0 then
+        return nil
+    end
+    local counter_wrapper = read_qword(static_data + 0x1e0)
+    if counter_wrapper == nil or counter_wrapper == 0 then
+        return nil
+    end
+    local counter_object = read_qword(counter_wrapper + 0x10)
+    local base_seed_raw = read_qword(static_data + 0x170)
+    if counter_object == nil or counter_object == 0 or base_seed_raw == nil then
+        return nil
+    end
+    local counter_gate = read_dword(counter_object + 0x1c)
+    local counter = read_dword(counter_object + 0xf4)
+    local gogma_counter = read_dword(counter_object + 0xa8)
+    if counter_gate == nil or counter == nil or gogma_counter == nil
+            or counter_gate > 0x100000 or counter > 0x10000000
+            or gogma_counter > 0x10000000 then
+        return nil
+    end
+    return {
+        base_seed_raw = base_seed_raw,
+        base_seed = base_seed_raw % 100000000,
+        counter_gate = counter_gate,
+        counter = counter,
+        gogma_counter = gogma_counter,
+    }
+end
+
+local function resolve_rng_static_reference(method_address)
+    if rng_static_reference_address ~= nil
+            and rng_state_from_static_reference(rng_static_reference_address) ~= nil then
+        return rng_static_reference_address
+    end
+
+    -- Managed static references are loaded through RIP-relative MOV/LEA
+    -- instructions. Resolve and validate those references so executable updates
+    -- do not require a fixed displacement from lotterySkill.
+    for offset = 0, 0x1000 do
+        local rex = read_byte(method_address + offset)
+        local opcode = read_byte(method_address + offset + 1)
+        local modrm = read_byte(method_address + offset + 2)
+        if rex ~= nil and rex >= 0x48 and rex <= 0x4f
+                and (opcode == 0x8b or opcode == 0x8d)
+                and modrm ~= nil and (modrm & 0xc7) == 0x05 then
+            local displacement = read_dword(method_address + offset + 3)
+            if displacement ~= nil then
+                if displacement >= 0x80000000 then
+                    displacement = displacement - 0x100000000
+                end
+                local candidate = method_address + offset + 7 + displacement
+                if rng_state_from_static_reference(candidate) ~= nil then
+                    rng_static_reference_address = candidate
+                    return candidate
+                end
+            end
+        end
+    end
+    return nil
+end
+
 local function read_skill_rng_state()
     if lottery_method == nil then
         return nil
     end
-    local address = sdk.to_int64(lottery_method:get_function())
-    local type_info = read_qword(address + 0x106d54f8)
-    local static_holder = read_qword(type_info + 0x80)
-    local static_array = read_qword(static_holder + 0x10)
-    local static_index = read_dword(type_info + 0xe0)
-    local static_data = read_qword(static_array + static_index * 8 + 0x20)
-    local counter_wrapper = read_qword(static_data + 0x1e0)
-    local counter_object = read_qword(counter_wrapper + 0x10)
-    local base_seed_raw = read_qword(static_data + 0x170)
-    return {
-        base_seed_raw = base_seed_raw,
-        base_seed = base_seed_raw % 100000000,
-        counter_gate = read_dword(counter_object + 0x1c),
-        counter = read_dword(counter_object + 0xf4),
-        gogma_counter = read_dword(counter_object + 0xa8),
-    }
+    local ok, method_address = pcall(function()
+        return sdk.to_int64(lottery_method:get_function())
+    end)
+    if not ok or method_address == nil or method_address == 0 then
+        return nil
+    end
+    local reference_address = resolve_rng_static_reference(method_address)
+    return reference_address ~= nil
+        and rng_state_from_static_reference(reference_address) or nil
 end
 
 local function rng_step(x, y, z, w)
@@ -755,24 +839,37 @@ local function read_existing_gogma_weapons()
     end
 
     local weapons = {}
-    local empty_streak = 0
-    for index = 0, 999 do
+    local equip_count = nil
+    for _, accessor in ipairs({ "get_Count", "get_Length" }) do
+        local ok, value = pcall(function()
+            return equip_box:call(accessor)
+        end)
+        if ok and tonumber(value) ~= nil then
+            equip_count = tonumber(value)
+            break
+        end
+    end
+    if equip_count == nil then
+        local ok, value = pcall(function()
+            return equip_box:get_size()
+        end)
+        if ok then
+            equip_count = tonumber(value)
+        end
+    end
+    local last_index = equip_count ~= nil
+        and math.min(math.max(0, equip_count - 1), 999) or 999
+    for index = 0, last_index do
         local equip_work = collection_item(equip_box, index)
-        if equip_work == nil then
-            empty_streak = empty_streak + 1
-            if empty_streak > 30 then
-                break
-            end
-        else
-            empty_streak = 0
-            local category = equip_field_number(equip_work, "Category_Gender") or 0
+        if equip_work ~= nil then
             local weapon_type = equip_field_number(equip_work, "FreeVal0")
             local bonus_by_creating = equip_field_number(equip_work, "BonusByCreating")
             local bonus_by_grinding_low = equip_field_number(equip_work, "BonusByGrinding") or 0
             local bonus_by_grinding = equip_field_full_number(equip_work, "BonusByGrinding")
                 or bonus_by_grinding_low
             local performance_type = equip_field_number(equip_work, "FreeVal2")
-            if category % 16 == 13 and weapon_type ~= nil
+            if weapon_type ~= nil and weapon_type >= 0
+                    and weapon_type < #weapon_type_names
                     and bonus_by_grinding_low > 0 and performance_type ~= nil
                     and performance_type >= 0 then
                 local attribute_force = attribute_force_from_performance_type(performance_type)
@@ -1065,8 +1162,11 @@ local function derive_material_recipe()
 end
 
 function skill_attribute_force_for_recipe(attribute)
-    -- Element values observed so far match the selector index. Status values
-    -- use the game's status enum range, where Poison starts at 6 and Blast is 9.
+    -- Dragon uses force 5 for the roll seed. Status values use the game's
+    -- status enum range, where Poison starts at 6 and Blast is 9.
+    if attribute == 6 then
+        return 5
+    end
     return attribute >= 7 and attribute - 1 or attribute
 end
 
@@ -1082,7 +1182,7 @@ local function configured_base_reinforcement_pool()
         order = { 6, 4, 7, 8 }
     else
         limits = { [4] = 5, [6] = 5, [7] = 2, [8] = 5 }
-        order = { 4, 6, 7, 8 }
+        order = { 6, 4, 7, 8 }
     end
     local pool = {}
     for _, bonus_id in ipairs(order) do
@@ -1446,7 +1546,8 @@ maybe_yield_full_plan = function(progress)
     end
 end
 
-local function find_mixed_gogma_route_from(capture, current_value, target, limit)
+local function find_mixed_gogma_route_from(
+        capture, current_value, target, limit, force_initial_reset)
     if current_value == nil or capture == nil or capture.gogma_counter == nil
         or capture.base_seed == nil or capture.weapon_type == nil
         or capture.attribute_force == nil then
@@ -1456,7 +1557,7 @@ local function find_mixed_gogma_route_from(capture, current_value, target, limit
     if rng == nil then
         return nil, nil
     end
-    local states = {
+    local states = force_initial_reset and {} or {
         { packed = current_value, last_reset = nil },
     }
     for distance = 1, limit or 5000 do
@@ -1835,6 +1936,7 @@ local function calculate_from_scratch_plan()
             counter = rng_state.counter,
             counter_gate = rng_state.counter_gate,
             counter_is_next = false,
+            skill_reset_devices = COSTS.skill_reset_devices,
         }
         local desired_type = desired_artian_skill_type()
         local initial_type, distance = predict_skill_route(skill_capture, desired_type)
@@ -2014,6 +2116,7 @@ local function calculate_existing_weapon_route()
                 counter = rng_state.counter,
                 counter_gate = rng_state.counter_gate,
                 counter_is_next = true,
+                skill_reset_devices = COSTS.skill_reset_devices,
             }, desired_type)
             if distance == nil then
                 state.existing_route_status =
@@ -2028,6 +2131,7 @@ local function calculate_existing_weapon_route()
                 counter = rng_state.counter,
                 counter_gate = rng_state.counter_gate,
                 counter_is_next = true,
+                skill_reset_devices = COSTS.skill_reset_devices,
             }
             total = total + distance
         end
@@ -2043,13 +2147,10 @@ local function calculate_existing_weapon_route()
         end
         local current_value = selected_weapon.gogma_value
         state.existing_start_gogma_value = current_value
-        if packed_reinforcement_tier(current_value) ~= "gogma" then
-            state.existing_route_status =
-                "The selected weapon is still base Artian; upgrade it to Gogma before amendment planning."
-            return
-        end
+        local has_gogma_bonuses = packed_reinforcement_tier(current_value) == "gogma"
         local target = selected_gogma_bonus_ids()
-        if same_multiset(unpack_gogma_bonus_ids(current_value), target) then
+        if has_gogma_bonuses
+                and same_multiset(unpack_gogma_bonus_ids(current_value), target) then
             state.existing_gogma_resets = 0
             state.existing_gogma_keeps = 0
             state.existing_gogma_value = current_value
@@ -2061,16 +2162,17 @@ local function calculate_existing_weapon_route()
                 gogma_counter = rng_state.gogma_counter,
                 counter_gate = rng_state.counter_gate,
             }
-            local current_ids = unpack_gogma_bonus_ids(current_value)
+            local current_ids = has_gogma_bonuses
+                and unpack_gogma_bonus_ids(current_value) or {}
             local distance, value, last_reset
-            if same_gogma_families(current_ids, target) then
+            if has_gogma_bonuses and same_gogma_families(current_ids, target) then
                 distance, value = find_keep_gogma_route_from(
                     capture, current_value, target, 5000
                 )
             end
             if distance == nil then
                 distance, value, last_reset = find_mixed_gogma_route_from(
-                    capture, current_value, target, 5000
+                    capture, current_value, target, 5000, not has_gogma_bonuses
                 )
             end
             if distance == nil then
@@ -2789,7 +2891,8 @@ local function existing_weapon_web_json(weapon)
     if set_index == nil or group_index == nil then
         return nil
     end
-    local tier = packed_reinforcement_tier(weapon.gogma_value)
+    local tier = packed_reinforcement_tier(weapon.gogma_value) == "gogma"
+        and "gogma" or "unamended"
     local reinforcements = {}
     local packed = tonumber(weapon.gogma_value) or 0
     for _ = 1, 5 do
@@ -2852,9 +2955,6 @@ local function existing_weapon_web_calculator_values_text(selected_weapon)
     if rng_state == nil then
         return nil, "Export failed: calculate an existing weapon plan first."
     end
-    if packed_reinforcement_tier(selected_weapon.gogma_value) ~= "gogma" then
-        return nil, "Export failed: the selected weapon must be Gogma Artian."
-    end
     local selected_json = existing_weapon_web_json(selected_weapon)
     if selected_json == nil then
         return nil, "Export failed: the selected weapon's skills could not be mapped."
@@ -2862,6 +2962,17 @@ local function existing_weapon_web_calculator_values_text(selected_weapon)
     local selected_set, selected_group = names_for_artian_skill_type(selected_weapon.skill_type)
     local selected_set_index = index_of(set_skill_names, selected_set)
     local selected_group_index = index_of(group_skill_names, selected_group)
+    local selected_has_gogma_bonuses =
+        packed_reinforcement_tier(selected_weapon.gogma_value) == "gogma"
+    local selected_tier = selected_has_gogma_bonuses and "gogma" or "unamended"
+    local selected_reinforcements = {}
+    local selected_packed = tonumber(selected_weapon.gogma_value) or 0
+    for _ = 1, 5 do
+        local value = selected_packed % 1000
+        table.insert(selected_reinforcements,
+            tostring(selected_has_gogma_bonuses and value - 1 or value))
+        selected_packed = math.floor(selected_packed / 1000)
+    end
     local weapon_json = {}
     local selected_export_index = nil
     for _, weapon in ipairs(state.existing_weapons or {}) do
@@ -2891,8 +3002,8 @@ local function existing_weapon_web_calculator_values_text(selected_weapon)
         '  "attributeForce": ' .. tostring(selected_weapon.attribute_force) .. ",",
         '  "currentSetSkill": ' .. tostring(selected_set_index) .. ",",
         '  "currentGroupSkill": ' .. tostring(selected_group_index) .. ",",
-        '  "currentReinforcementTier": "gogma",',
-        '  "currentReinforcements": [' .. table.concat(unpack_gogma_bonus_ids(selected_weapon.gogma_value), ", ") .. "],",
+        '  "currentReinforcementTier": "' .. selected_tier .. '",',
+        '  "currentReinforcements": [' .. table.concat(selected_reinforcements, ", ") .. "],",
         '  "desiredReinforcements": [' .. reinforcement_target_json() .. "],",
         '  "desiredSetSkill": ' .. tostring(state.desired_set_skill) .. ",",
         '  "desiredGroupSkill": ' .. tostring(state.desired_group_skill) .. ",",
@@ -3101,7 +3212,7 @@ local function draw_from_scratch_plan()
             .. " Artian parts + "
             .. format_number((costs.base_points + costs.amend_points) / COSTS.oricalcite_points)
             .. " Oricalcite (" .. format_number(costs.base_points + costs.amend_points) .. " material points) + "
-            .. format_number(costs.upgrade_devices) .. " Tarred Devices + "
+            .. format_number(costs.upgrade_devices) .. " matching-focus Tarred Devices + "
             .. format_number(costs.total_zenny) .. "z"
         if state.full_plan_skills_pending then
             total_line = total_line .. " (skill-reset cost pending)"
@@ -3289,7 +3400,8 @@ local function append_skill_prediction_rows(rows, overall_step, distance, captur
         table.insert(rows, {
             overall_step, step, "Gogma set and group skills", "Reset skills",
             set_name ~= nil and (set_name .. " / " .. group_name) or "unknown", target,
-            0, COSTS.skill_reset_zenny, COSTS.skill_reset_points, 0, 0,
+            0, COSTS.skill_reset_zenny, COSTS.skill_reset_points, 0,
+            capture.skill_reset_devices or 0,
         })
     end
     return overall_step
@@ -3346,7 +3458,7 @@ local function export_prediction_rows()
     local rows = {
         { "Row", "Stage step", "Stage", "Action", "Predicted result", "Target",
             "Base reinforcement points", "Zenny", "Gogma material points",
-            "Rarity-8 Artian parts", "Tarred Devices" },
+            "Rarity-8 Artian parts", "Tarred Devices (matching focus)" },
     }
     local overall_step = 0
     if state.include_base_predictions then
@@ -3411,7 +3523,7 @@ local function export_existing_prediction_rows()
     local rows = {
         { "Row", "Stage step", "Stage", "Action", "Predicted result", "Target",
             "Base reinforcement points", "Zenny", "Gogma material points",
-            "Rarity-8 Artian parts", "Tarred Devices" },
+            "Rarity-8 Artian parts", "Tarred Devices (matching focus)" },
         { 1, "", "Existing weapon", "Starting state",
             tostring(weapon_type_names[selected_weapon.weapon_type + 1] or "Weapon")
                 .. " / " .. tostring(attribute_names[selected_weapon.attribute_index]
@@ -3440,7 +3552,7 @@ local function export_existing_prediction_rows()
         (state.existing_skill_resets or 0) * COSTS.skill_reset_points
             + ((state.existing_gogma_resets or 0)
                 + (state.existing_gogma_keeps or 0)) * COSTS.gogma_amend_points,
-        0, 0,
+        0, (state.existing_skill_resets or 0) * COSTS.skill_reset_devices,
     })
 
     local path = resolve_data_path(EXPORT_PATH)
