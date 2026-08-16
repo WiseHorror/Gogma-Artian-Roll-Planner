@@ -174,8 +174,7 @@ function deriveMaterialRecipe(attrs) {
   return {finalAttribute, hasElementInfusion: matching === 3};
 }
 function skillAttributeForce(attribute) {
-  if (attribute === 6) return 5;
-  return attribute >= 7 ? attribute - 1 : attribute;
+  return [0, 0, 1, 2, 4, 3, 5, 6, 7, 8, 9][attribute];
 }
 function configuredBasePool(finalAttribute) {
   const order = finalAttribute === 1 ? [6, 7, 8] : [6, 4, 7, 8];

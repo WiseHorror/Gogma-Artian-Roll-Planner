@@ -2,7 +2,7 @@
 -- Artian/Gogma skill and reinforcement route planner for Monster Hunter Wilds.
 
 local MOD_NAME = "Gogma Artian Roll Planner"
-local VERSION = "0.9.2"
+local VERSION = "0.9.3"
 local CONFIG_PATH = "GogmaArtianRollPlanner.json"
 local EXPORT_DIRECTORY = "Gogma Artian Roll Planner"
 local EXPORT_PATH = EXPORT_DIRECTORY .. "/GogmaArtianRollPlannerPredictions.csv"
@@ -790,9 +790,7 @@ local function attribute_force_from_performance_type(performance_type)
         [22611] = skill_attribute_force_for_recipe(2), -- Fire
         [31749] = skill_attribute_force_for_recipe(3), -- Water
         [22190] = skill_attribute_force_for_recipe(4), -- Thunder
-        -- Ice displays as attribute 5, but its existing-weapon roll seed uses
-        -- force 3. This is distinct from the material recipe selector value.
-        [29119] = 3, -- Ice
+        [29119] = skill_attribute_force_for_recipe(5), -- Ice
         [18812] = skill_attribute_force_for_recipe(6), -- Dragon
         [27364] = skill_attribute_force_for_recipe(7), -- Poison
         [19855] = skill_attribute_force_for_recipe(8), -- Paralysis
@@ -1162,12 +1160,9 @@ local function derive_material_recipe()
 end
 
 function skill_attribute_force_for_recipe(attribute)
-    -- Dragon uses force 5 for the roll seed. Status values use the game's
-    -- status enum range, where Poison starts at 6 and Blast is 9.
-    if attribute == 6 then
-        return 5
-    end
-    return attribute >= 7 and attribute - 1 or attribute
+    -- Recipe selectors use UI order; roll seeds use the game's attribute enum.
+    local forces = { 0, 1, 2, 4, 3, 5, 6, 7, 8, 9 }
+    return forces[attribute]
 end
 
 local function configured_base_reinforcement_pool()
