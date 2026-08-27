@@ -2,7 +2,7 @@
 -- Artian/Gogma skill and reinforcement route planner for Monster Hunter Wilds.
 
 local MOD_NAME = "Gogma Artian Roll Planner"
-local VERSION = "0.9.3"
+local VERSION = "0.9.4"
 local CONFIG_PATH = "GogmaArtianRollPlanner.json"
 local EXPORT_DIRECTORY = "Gogma Artian Roll Planner"
 local EXPORT_PATH = EXPORT_DIRECTORY .. "/GogmaArtianRollPlannerPredictions.csv"
@@ -825,6 +825,32 @@ local function attribute_index_from_performance_type(performance_type)
     return known[tonumber(performance_type)]
 end
 
+-- FreeVal1 stores the zero-based weapon definition ID. Gogma Artian weapons
+-- have three definitions per weapon type (Attack, Affinity, and Element focus),
+-- so this remains reliable before the first reinforcement amendment populates
+-- BonusByGrinding.
+local gogma_weapon_ids_by_type = {
+    [0] = { [86] = true, [87] = true, [88] = true }, -- Great Sword
+    [1] = { [94] = true, [95] = true, [96] = true }, -- Sword & Shield
+    [2] = { [89] = true, [90] = true, [91] = true }, -- Dual Blades
+    [3] = { [90] = true, [91] = true, [98] = true }, -- Long Sword
+    [4] = { [85] = true, [86] = true, [87] = true }, -- Hammer
+    [5] = { [85] = true, [86] = true, [87] = true }, -- Hunting Horn
+    [6] = { [84] = true, [85] = true, [86] = true }, -- Lance
+    [7] = { [83] = true, [84] = true, [85] = true }, -- Gunlance
+    [8] = { [79] = true, [80] = true, [81] = true }, -- Switch Axe
+    [9] = { [84] = true, [85] = true, [86] = true }, -- Charge Blade
+    [10] = { [85] = true, [86] = true, [87] = true }, -- Insect Glaive
+    [11] = { [90] = true, [91] = true, [98] = true }, -- Bow
+    [12] = { [79] = true, [80] = true, [81] = true }, -- Heavy Bowgun
+    [13] = { [85] = true, [86] = true, [87] = true }, -- Light Bowgun
+}
+
+local function is_gogma_weapon_id(weapon_type, weapon_id)
+    local ids = gogma_weapon_ids_by_type[tonumber(weapon_type)]
+    return ids ~= nil and ids[tonumber(weapon_id)] == true
+end
+
 local function read_existing_gogma_weapons()
     local equip_param = resolve_artian_create_param ~= nil
         and resolve_artian_create_param(state.target_weapon_type - 1, 7) or nil
@@ -855,12 +881,16 @@ local function read_existing_gogma_weapons()
             equip_count = tonumber(value)
         end
     end
+    -- Equipment records can occupy slots beyond 999. Trust the collection's
+    -- reported bounds. If no count API is available, scan through index 2999;
+    -- this fallback is based on observed saves, not a verified box capacity.
     local last_index = equip_count ~= nil
-        and math.min(math.max(0, equip_count - 1), 999) or 999
+        and math.floor(equip_count) - 1 or 2999
     for index = 0, last_index do
         local equip_work = collection_item(equip_box, index)
         if equip_work ~= nil then
             local weapon_type = equip_field_number(equip_work, "FreeVal0")
+            local weapon_id = equip_field_number(equip_work, "FreeVal1")
             local bonus_by_creating = equip_field_number(equip_work, "BonusByCreating")
             local bonus_by_grinding_low = equip_field_number(equip_work, "BonusByGrinding") or 0
             local bonus_by_grinding = equip_field_full_number(equip_work, "BonusByGrinding")
@@ -868,7 +898,8 @@ local function read_existing_gogma_weapons()
             local performance_type = equip_field_number(equip_work, "FreeVal2")
             if weapon_type ~= nil and weapon_type >= 0
                     and weapon_type < #weapon_type_names
-                    and bonus_by_grinding_low > 0 and performance_type ~= nil
+                    and is_gogma_weapon_id(weapon_type, weapon_id)
+                    and performance_type ~= nil
                     and performance_type >= 0 then
                 local attribute_force = attribute_force_from_performance_type(performance_type)
                 local attribute_index = attribute_index_from_performance_type(performance_type)
